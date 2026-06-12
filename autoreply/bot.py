@@ -4,7 +4,7 @@ import random
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatMemberStatus, ChatType
 from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import Message
+from pyrogram.types import BotCommand, Message
 
 from autoreply.config import Settings
 from autoreply.repository import GroupRepository, MAX_REACTIONS, MAX_RESPONSES
@@ -16,8 +16,7 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 COMMANDS = [
-    "autoreply_on",
-    "autoreply_off",
+    "autoreply",
     "autoreply_add",
     "autoreply_remove",
     "autoreply_list",
@@ -30,6 +29,23 @@ COMMANDS = [
     "reaction_add",
     "reaction_remove",
     "reaction_list",
+]
+BOT_MENU_COMMANDS = [
+    BotCommand("start", "Show setup instructions"),
+    BotCommand("help", "Show setup instructions"),
+    BotCommand("autoreply", "Enable or disable: /autoreply on|off"),
+    BotCommand("autoreply_add", "Add a reply message"),
+    BotCommand("autoreply_remove", "Remove a reply by number"),
+    BotCommand("autoreply_list", "List reply messages"),
+    BotCommand("autoreply_clear", "Remove all reply messages"),
+    BotCommand("autoreply_status", "Show interaction status"),
+    BotCommand("autoreply_help", "Show all commands"),
+    BotCommand("reaction_on", "Enable random reactions"),
+    BotCommand("reaction_off", "Disable random reactions"),
+    BotCommand("reaction_chance", "Set reaction chance from 0 to 100"),
+    BotCommand("reaction_add", "Add a reaction emoji"),
+    BotCommand("reaction_remove", "Remove a reaction emoji"),
+    BotCommand("reaction_list", "List reaction emojis"),
 ]
 
 
@@ -54,14 +70,25 @@ async def is_group_admin(client: Client, message: Message) -> bool:
 async def require_admin(client: Client, message: Message) -> bool:
     try:
         allowed = await is_group_admin(client, message)
-    except RPCError:
-        allowed = False
+    except RPCError as exc:
+        LOGGER.warning("Could not verify admin in chat %s: %s", message.chat.id, exc)
+        await message.reply_text(
+            "I could not verify group administrators. Make me a group administrator, then try again."
+        )
+        return False
     if not allowed:
         await message.reply_text("Only group administrators can manage auto-replies.")
     return allowed
 
 
 def register_handlers(app: Client, repository: GroupRepository) -> None:
+    @app.on_message(filters.private & filters.command(["start", "help"]))
+    async def private_help(_: Client, message: Message) -> None:
+        await message.reply_text(
+            "Add me to a group as an administrator and disable privacy mode with BotFather.\n\n"
+            "Then use /autoreply on and /autoreply_add <message> in the group."
+        )
+
     group_commands = filters.group & filters.command(COMMANDS)
 
     @app.on_message(group_commands)
@@ -75,8 +102,8 @@ def register_handlers(app: Client, repository: GroupRepository) -> None:
         if command == "autoreply_help":
             await message.reply_text(
                 "Admin commands:\n"
-                "/autoreply_on - enable replies\n"
-                "/autoreply_off - disable replies\n"
+                "/autoreply on - enable interactions\n"
+                "/autoreply off - disable interactions\n"
                 "/autoreply_add <message> - add a response\n"
                 "/autoreply_remove <number> - remove a response\n"
                 "/autoreply_list - list responses\n"
@@ -88,10 +115,28 @@ def register_handlers(app: Client, repository: GroupRepository) -> None:
                 "/reaction_remove <emoji> - remove a reaction\n"
                 "/reaction_list - list reactions"
             )
-        elif command in {"autoreply_on", "autoreply_off"}:
-            enabled = command == "autoreply_on"
-            await repository.set_enabled(chat_id, enabled)
-            await message.reply_text(f"Auto-replies are now {'enabled' if enabled else 'disabled'}.")
+        elif command == "autoreply":
+            action = command_argument(message).lower()
+            if action not in {"on", "off"}:
+                await message.reply_text("Usage: /autoreply on or /autoreply off")
+            else:
+                enabled = action == "on"
+                await repository.set_enabled(chat_id, enabled)
+                if enabled:
+                    settings = await repository.get(chat_id)
+                    response_count = len(settings["responses"])
+                    note = (
+                        "\nNo reply messages are configured yet. Use /autoreply_add <message>."
+                        if response_count == 0
+                        else f"\nConfigured reply messages: {response_count}."
+                    )
+                    await message.reply_text(
+                        "Interactions are now enabled."
+                        f"\nRandom reaction chance: {settings['reaction_chance']}%."
+                        f"{note}"
+                    )
+                else:
+                    await message.reply_text("Interactions are now disabled.")
         elif command == "autoreply_add":
             response = command_argument(message)
             if not response:
@@ -219,7 +264,8 @@ async def start() -> None:
 
     try:
         await app.start()
-        LOGGER.info("Auto-reply bot started")
+        await app.set_bot_commands(BOT_MENU_COMMANDS)
+        LOGGER.info("Interaction bot started and command menu registered")
         await idle()
     finally:
         await app.stop()

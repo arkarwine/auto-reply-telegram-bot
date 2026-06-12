@@ -6,7 +6,9 @@ rotates through group-specific replies and sometimes adds a random reaction.
 ## Ubuntu deployment
 
 1. Create a bot with BotFather and disable its privacy mode using `/setprivacy`
-   so it can receive every group message.
+   so it can receive every group message. Add the bot to the group as an
+   administrator so it can reliably verify admin commands and interact with
+   messages.
 2. Get a Telegram API ID and API hash from <https://my.telegram.org>.
 3. Install Python, then install MongoDB Community Edition using MongoDB's
    official Ubuntu instructions or use MongoDB Atlas:
@@ -43,7 +45,7 @@ View logs with `sudo journalctl -u autoreply -f`.
 
 Group administrators can use:
 
-- `/autoreply_on` and `/autoreply_off`
+- `/autoreply on` and `/autoreply off`
 - `/autoreply_add <text>`
 - `/autoreply_remove <number>`
 - `/autoreply_list`
@@ -59,6 +61,11 @@ Group administrators can use:
 Commands are admin-only. Commands, service events, and messages sent by other
 bots are ignored. Enabling auto-replies also acts as the master switch for all
 interactions. Random reactions default to a 25% chance.
+
+After adding the bot as an administrator, run `/autoreply on`. Text replies
+also require at least one message added with `/autoreply_add <text>`.
+The bot registers its command menu during startup and responds to `/start` or
+`/help` in private chat with setup instructions.
 
 ## Tests
 
