@@ -50,7 +50,7 @@ class GroupRepository:
             upsert=True,
         )
 
-    async def add_response(self, chat_id: int, response: str) -> str:
+    async def add_response(self, chat_id: int, response: Any) -> str:
         document = await self.get(chat_id)
         responses = document["responses"]
         if response in responses:
@@ -74,7 +74,7 @@ class GroupRepository:
         )
         return "added"
 
-    async def remove_response(self, chat_id: int, one_based_index: int) -> str | None:
+    async def remove_response(self, chat_id: int, one_based_index: int) -> Any | None:
         document = await self.get(chat_id)
         responses = document["responses"]
         if one_based_index < 1 or one_based_index > len(responses):
@@ -98,7 +98,7 @@ class GroupRepository:
         )
         return count
 
-    async def next_response(self, chat_id: int) -> str | None:
+    async def next_response(self, chat_id: int) -> Any | None:
         document = await self.collection.find_one_and_update(
             {
                 "_id": chat_id,

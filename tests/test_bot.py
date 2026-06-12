@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from pyrogram.enums import ParseMode
 
 from autoreply.bot import (
@@ -11,6 +12,9 @@ from autoreply.bot import (
     command_action,
     command_argument,
     link_keyboard,
+    response_from_message,
+    response_label,
+    send_response,
     valid_link,
 )
 
@@ -76,6 +80,55 @@ def test_autoreply_catalog_contains_reply_and_reaction_commands() -> None:
 def test_start_text_contains_setup_steps() -> None:
     assert "/autoreply add <message>" in START_TEXT
     assert "/autoreply on" in START_TEXT
+
+
+def test_response_from_replied_message() -> None:
+    replied = SimpleNamespace(
+        id=42,
+        chat=SimpleNamespace(id=-100123),
+        media="MessageMediaType.PHOTO",
+    )
+    command = SimpleNamespace(reply_to_message=replied)
+
+    response = response_from_message(command)
+
+    assert response == {
+        "kind": "message",
+        "chat_id": -100123,
+        "message_id": 42,
+        "label": "MessageMediaType.PHOTO",
+    }
+    assert response_label(response) == "[MessageMediaType.PHOTO]"
+
+
+def test_response_label_preserves_existing_text_responses() -> None:
+    assert response_label("hello") == "hello"
+
+
+@pytest.mark.asyncio
+async def test_send_response_copies_stored_telegram_message() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.arguments = None
+
+        async def copy_message(self, **kwargs) -> None:
+            self.arguments = kwargs
+
+    client = FakeClient()
+    incoming = SimpleNamespace(chat=SimpleNamespace(id=-100999), id=77)
+
+    await send_response(
+        client,
+        incoming,
+        {"kind": "message", "chat_id": -100123, "message_id": 42, "label": "photo"},
+    )
+
+    assert client.arguments == {
+        "chat_id": -100999,
+        "from_chat_id": -100123,
+        "message_id": 42,
+        "reply_to_message_id": 77,
+    }
 
 
 def test_link_keyboard_uses_configured_links() -> None:

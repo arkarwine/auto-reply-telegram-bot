@@ -62,6 +62,7 @@ Group administrators can use:
 
 - `/autoreply on` and `/autoreply off`
 - `/autoreply add <text>`
+- Reply to any copyable Telegram message with `/autoreply add`
 - `/autoreply remove <number>`
 - `/autoreply list`
 - `/autoreply clear`
@@ -83,6 +84,9 @@ Automatic Telegram text parsing is disabled, so literal text such as
 
 After adding the bot as an administrator, run `/autoreply on`. Text replies
 also require at least one message added with `/autoreply add <text>`.
+To add photos, videos, stickers, documents, voice notes, polls, or other
+Telegram messages, reply to the message with `/autoreply add`. The original
+source message must remain available so the bot can copy it later.
 The bot registers its command menu during startup and responds to `/start` or
 `/help` in private chat with setup instructions.
 

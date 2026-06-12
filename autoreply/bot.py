@@ -34,7 +34,7 @@ START_TEXT = (
     "Quick setup:\n"
     "1. Add me to your group as an administrator.\n"
     "2. Disable privacy mode through BotFather so I can see group messages.\n"
-    "3. Add a reply with /autoreply add <message>.\n"
+    "3. Add text with /autoreply add <message>, or reply to any message with /autoreply add.\n"
     "4. Enable interactions with /autoreply on.\n\n"
     "Use /autoreply in the group to view every available command."
 )
@@ -43,7 +43,8 @@ COMMAND_CATALOG = (
     "Replies\n"
     "/autoreply on - enable interactions\n"
     "/autoreply off - disable interactions\n"
-    "/autoreply add <message> - add a response\n"
+    "/autoreply add <message> - add a text response\n"
+    "/autoreply add - reply to any message to add it\n"
     "/autoreply remove <number> - remove a response\n"
     "/autoreply list - list responses\n"
     "/autoreply clear - remove all responses\n"
@@ -89,6 +90,41 @@ def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
 
 def valid_link(value: str) -> bool:
     return value.startswith(("https://", "http://", "tg://"))
+
+
+def response_from_message(message: Message) -> dict[str, int | str] | None:
+    replied = message.reply_to_message
+    if not replied:
+        return None
+    return {
+        "kind": "message",
+        "chat_id": replied.chat.id,
+        "message_id": replied.id,
+        "label": str(replied.media or "text"),
+    }
+
+
+def response_label(response: object) -> str:
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict) and response.get("kind") == "message":
+        return f"[{response.get('label', 'message')}]"
+    return "[unsupported response]"
+
+
+async def send_response(client: Client, incoming: Message, response: object) -> None:
+    if isinstance(response, str):
+        await incoming.reply_text(response)
+        return
+    if isinstance(response, dict) and response.get("kind") == "message":
+        await client.copy_message(
+            chat_id=incoming.chat.id,
+            from_chat_id=response["chat_id"],
+            message_id=response["message_id"],
+            reply_to_message_id=incoming.id,
+        )
+        return
+    raise ValueError("Unsupported stored response")
 
 
 async def is_group_admin(client: Client, message: Message) -> bool:
@@ -175,12 +211,15 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 else:
                     await message.reply_text("Interactions are now disabled.")
             elif action == "add":
-                if not value:
-                    await message.reply_text("Usage: /autoreply add <message>")
-                elif len(value) > 4000:
+                copied_response = response_from_message(message)
+                if not value and not copied_response:
+                    await message.reply_text(
+                        "Usage: /autoreply add <message>, or reply to any message with /autoreply add"
+                    )
+                elif value and len(value) > 4000:
                     await message.reply_text("Responses must be 4,000 characters or fewer.")
                 else:
-                    result = await repository.add_response(chat_id, value)
+                    result = await repository.add_response(chat_id, copied_response or value)
                     replies = {
                         "added": "Response added.",
                         "duplicate": "That response already exists.",
@@ -201,7 +240,10 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 if not responses:
                     await message.reply_text("No responses are configured.")
                 else:
-                    lines = [f"{index}. {text}" for index, text in enumerate(responses, start=1)]
+                    lines = [
+                        f"{index}. {response_label(response)}"
+                        for index, response in enumerate(responses, start=1)
+                    ]
                     await message.reply_text(("Configured responses:\n" + "\n".join(lines))[:4096])
             elif action == "clear":
                 count = await repository.clear_responses(chat_id)
@@ -275,15 +317,17 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         )
 
     @app.on_message(filters.create(eligible_message), group=1)
-    async def handle_group_message(_: Client, message: Message) -> None:
+    async def handle_group_message(client: Client, message: Message) -> None:
         response = await repository.next_response(message.chat.id)
         if response:
             try:
-                await message.reply_text(response)
+                await send_response(client, message, response)
             except FloodWait as exc:
                 LOGGER.warning("Reply flood wait for %s seconds in chat %s", exc.value, message.chat.id)
             except RPCError:
                 LOGGER.exception("Could not reply in chat %s", message.chat.id)
+            except (KeyError, TypeError, ValueError):
+                LOGGER.exception("Invalid stored response in chat %s", message.chat.id)
 
         reaction_settings = await repository.reaction_settings(message.chat.id)
         reaction = choose_reaction(*reaction_settings) if reaction_settings else None
