@@ -95,6 +95,10 @@ def test_link_keyboard_uses_configured_links() -> None:
     ]
 
 
+def test_link_keyboard_is_hidden_when_no_links_are_configured() -> None:
+    assert link_keyboard({}) is None
+
+
 def test_link_validation() -> None:
     assert valid_link("https://t.me/example")
     assert valid_link("tg://user?id=123")
