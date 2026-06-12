@@ -1,22 +1,35 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from autoreply.bot import BOT_MENU_COMMANDS, choose_reaction, command_argument
+from pyrogram.enums import ParseMode
+
+from autoreply.bot import (
+    BOT_MENU_COMMANDS,
+    COMMAND_CATALOG,
+    choose_reaction,
+    command_action,
+    command_argument,
+)
 
 
 def test_command_argument_returns_remaining_text() -> None:
-    message = SimpleNamespace(text="/autoreply_add hello there")
-    assert command_argument(message) == "hello there"
+    message = SimpleNamespace(text="/autoreply add hello there")
+    assert command_argument(message) == "add hello there"
 
 
 def test_command_argument_handles_missing_argument() -> None:
-    message = SimpleNamespace(text="/autoreply_add")
+    message = SimpleNamespace(text="/autoreply")
     assert command_argument(message) == ""
 
 
 def test_command_argument_supports_autoreply_action() -> None:
     message = SimpleNamespace(text="/autoreply off")
     assert command_argument(message) == "off"
+
+
+def test_command_action_splits_action_and_value() -> None:
+    message = SimpleNamespace(text="/autoreply add hello there")
+    assert command_action(message) == ("add", "hello there")
 
 
 def test_choose_reaction_returns_none_when_chance_misses() -> None:
@@ -41,16 +54,14 @@ def test_bot_menu_contains_registered_commands() -> None:
         "start",
         "help",
         "autoreply",
-        "autoreply_add",
-        "autoreply_remove",
-        "autoreply_list",
-        "autoreply_clear",
-        "autoreply_status",
-        "autoreply_help",
-        "reaction_on",
-        "reaction_off",
-        "reaction_chance",
-        "reaction_add",
-        "reaction_remove",
-        "reaction_list",
+        "reaction",
     }
+
+
+def test_disabled_parse_mode_preserves_angle_brackets() -> None:
+    assert ParseMode.DISABLED.value == "disabled"
+
+
+def test_autoreply_catalog_contains_reply_and_reaction_commands() -> None:
+    assert "/autoreply add <message>" in COMMAND_CATALOG
+    assert "/reaction chance <0-100>" in COMMAND_CATALOG

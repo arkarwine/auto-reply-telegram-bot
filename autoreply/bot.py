@@ -2,7 +2,7 @@ import logging
 import random
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ChatMemberStatus, ChatType
+from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
 from pyrogram.errors import FloodWait, RPCError
 from pyrogram.types import BotCommand, Message
 
@@ -17,41 +17,44 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 COMMANDS = [
     "autoreply",
-    "autoreply_add",
-    "autoreply_remove",
-    "autoreply_list",
-    "autoreply_clear",
-    "autoreply_status",
-    "autoreply_help",
-    "reaction_on",
-    "reaction_off",
-    "reaction_chance",
-    "reaction_add",
-    "reaction_remove",
-    "reaction_list",
+    "reaction",
 ]
 BOT_MENU_COMMANDS = [
     BotCommand("start", "Show setup instructions"),
     BotCommand("help", "Show setup instructions"),
-    BotCommand("autoreply", "Enable or disable: /autoreply on|off"),
-    BotCommand("autoreply_add", "Add a reply message"),
-    BotCommand("autoreply_remove", "Remove a reply by number"),
-    BotCommand("autoreply_list", "List reply messages"),
-    BotCommand("autoreply_clear", "Remove all reply messages"),
-    BotCommand("autoreply_status", "Show interaction status"),
-    BotCommand("autoreply_help", "Show all commands"),
-    BotCommand("reaction_on", "Enable random reactions"),
-    BotCommand("reaction_off", "Disable random reactions"),
-    BotCommand("reaction_chance", "Set reaction chance from 0 to 100"),
-    BotCommand("reaction_add", "Add a reaction emoji"),
-    BotCommand("reaction_remove", "Remove a reaction emoji"),
-    BotCommand("reaction_list", "List reaction emojis"),
+    BotCommand("autoreply", "Show all available commands"),
+    BotCommand("reaction", "Manage reactions: /reaction help"),
 ]
+COMMAND_CATALOG = (
+    "Available commands:\n\n"
+    "Replies\n"
+    "/autoreply on - enable interactions\n"
+    "/autoreply off - disable interactions\n"
+    "/autoreply add <message> - add a response\n"
+    "/autoreply remove <number> - remove a response\n"
+    "/autoreply list - list responses\n"
+    "/autoreply clear - remove all responses\n"
+    "/autoreply status - show current status\n\n"
+    "Reactions\n"
+    "/reaction on - enable random reactions\n"
+    "/reaction off - disable random reactions\n"
+    "/reaction chance <0-100> - set probability\n"
+    "/reaction add <emoji> - add a reaction\n"
+    "/reaction remove <emoji> - remove a reaction\n"
+    "/reaction list - list reactions\n\n"
+    "Only group administrators can change settings."
+)
 
 
 def command_argument(message: Message) -> str:
     text = message.text or ""
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
+
+
+def command_action(message: Message) -> tuple[str, str]:
+    argument = command_argument(message)
+    parts = argument.split(maxsplit=1)
+    return (parts[0].lower(), parts[1].strip() if len(parts) == 2 else "") if parts else ("", "")
 
 
 def choose_reaction(chance: int, reactions: list[str]) -> str | None:
@@ -86,47 +89,34 @@ def register_handlers(app: Client, repository: GroupRepository) -> None:
     async def private_help(_: Client, message: Message) -> None:
         await message.reply_text(
             "Add me to a group as an administrator and disable privacy mode with BotFather.\n\n"
-            "Then use /autoreply on and /autoreply_add <message> in the group."
+            "Then use /autoreply on and /autoreply add <message> in the group."
         )
 
     group_commands = filters.group & filters.command(COMMANDS)
 
     @app.on_message(group_commands)
     async def handle_command(client: Client, message: Message) -> None:
+        command = message.command[0].lower()
+        action, value = command_action(message)
+
+        if command == "autoreply" and action in {"", "help"}:
+            await message.reply_text(COMMAND_CATALOG)
+            return
+
         if not await require_admin(client, message):
             return
 
-        command = message.command[0].lower()
         chat_id = message.chat.id
 
-        if command == "autoreply_help":
-            await message.reply_text(
-                "Admin commands:\n"
-                "/autoreply on - enable interactions\n"
-                "/autoreply off - disable interactions\n"
-                "/autoreply_add <message> - add a response\n"
-                "/autoreply_remove <number> - remove a response\n"
-                "/autoreply_list - list responses\n"
-                "/autoreply_clear - remove all responses\n"
-                "/autoreply_status - show current status\n"
-                "/reaction_on and /reaction_off - toggle reactions\n"
-                "/reaction_chance <0-100> - set reaction probability\n"
-                "/reaction_add <emoji> - add a reaction\n"
-                "/reaction_remove <emoji> - remove a reaction\n"
-                "/reaction_list - list reactions"
-            )
-        elif command == "autoreply":
-            action = command_argument(message).lower()
-            if action not in {"on", "off"}:
-                await message.reply_text("Usage: /autoreply on or /autoreply off")
-            else:
+        if command == "autoreply":
+            if action in {"on", "off"}:
                 enabled = action == "on"
                 await repository.set_enabled(chat_id, enabled)
                 if enabled:
                     settings = await repository.get(chat_id)
                     response_count = len(settings["responses"])
                     note = (
-                        "\nNo reply messages are configured yet. Use /autoreply_add <message>."
+                        "\nNo reply messages are configured yet. Use /autoreply add <message>."
                         if response_count == 0
                         else f"\nConfigured reply messages: {response_count}."
                     )
@@ -137,83 +127,96 @@ def register_handlers(app: Client, repository: GroupRepository) -> None:
                     )
                 else:
                     await message.reply_text("Interactions are now disabled.")
-        elif command == "autoreply_add":
-            response = command_argument(message)
-            if not response:
-                await message.reply_text("Usage: /autoreply_add <message>")
-            elif len(response) > 4000:
-                await message.reply_text("Responses must be 4,000 characters or fewer.")
+            elif action == "add":
+                if not value:
+                    await message.reply_text("Usage: /autoreply add <message>")
+                elif len(value) > 4000:
+                    await message.reply_text("Responses must be 4,000 characters or fewer.")
+                else:
+                    result = await repository.add_response(chat_id, value)
+                    replies = {
+                        "added": "Response added.",
+                        "duplicate": "That response already exists.",
+                        "full": f"This group already has the maximum of {MAX_RESPONSES} responses.",
+                    }
+                    await message.reply_text(replies[result])
+            elif action == "remove":
+                if not value.isdigit():
+                    await message.reply_text("Usage: /autoreply remove <number>")
+                else:
+                    removed = await repository.remove_response(chat_id, int(value))
+                    await message.reply_text(
+                        "Response removed." if removed else "Response number not found."
+                    )
+            elif action == "list":
+                document = await repository.get(chat_id)
+                responses = document["responses"]
+                if not responses:
+                    await message.reply_text("No responses are configured.")
+                else:
+                    lines = [f"{index}. {text}" for index, text in enumerate(responses, start=1)]
+                    await message.reply_text(("Configured responses:\n" + "\n".join(lines))[:4096])
+            elif action == "clear":
+                count = await repository.clear_responses(chat_id)
+                await message.reply_text(f"Removed {count} response(s).")
+            elif action == "status":
+                document = await repository.get(chat_id)
+                await message.reply_text(
+                    f"Status: {'enabled' if document['enabled'] else 'disabled'}\n"
+                    f"Responses: {len(document['responses'])}\n"
+                    f"Reply mode: rotate in order\n"
+                    f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
+                    f"Reaction chance: {document.get('reaction_chance', 25)}%"
+                )
             else:
-                result = await repository.add_response(chat_id, response)
-                replies = {
-                    "added": "Response added.",
-                    "duplicate": "That response already exists.",
-                    "full": f"This group already has the maximum of {MAX_RESPONSES} responses.",
-                }
-                await message.reply_text(replies[result])
-        elif command == "autoreply_remove":
-            argument = command_argument(message)
-            if not argument.isdigit():
-                await message.reply_text("Usage: /autoreply_remove <number>")
-            else:
-                removed = await repository.remove_response(chat_id, int(argument))
-                await message.reply_text("Response removed." if removed else "Response number not found.")
-        elif command == "autoreply_list":
-            document = await repository.get(chat_id)
-            responses = document["responses"]
-            if not responses:
-                await message.reply_text("No responses are configured.")
-            else:
-                lines = [f"{index}. {text}" for index, text in enumerate(responses, start=1)]
-                output = "Configured responses:\n" + "\n".join(lines)
-                await message.reply_text(output[:4096])
-        elif command == "autoreply_clear":
-            count = await repository.clear_responses(chat_id)
-            await message.reply_text(f"Removed {count} response(s).")
-        elif command == "autoreply_status":
-            document = await repository.get(chat_id)
+                await message.reply_text("Unknown action. Use /autoreply to view available commands.")
+        elif command == "reaction" and action in {"", "help"}:
             await message.reply_text(
-                f"Status: {'enabled' if document['enabled'] else 'disabled'}\n"
-                f"Responses: {len(document['responses'])}\n"
-                f"Reply mode: rotate in order\n"
-                f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
-                f"Reaction chance: {document.get('reaction_chance', 25)}%"
+                "Reaction commands:\n"
+                "/reaction on - enable random reactions\n"
+                "/reaction off - disable random reactions\n"
+                "/reaction chance <0-100> - set probability\n"
+                "/reaction add <emoji> - add a reaction\n"
+                "/reaction remove <emoji> - remove a reaction\n"
+                "/reaction list - list reactions"
             )
-        elif command in {"reaction_on", "reaction_off"}:
-            enabled = command == "reaction_on"
-            await repository.set_reactions_enabled(chat_id, enabled)
-            await message.reply_text(f"Random reactions are now {'enabled' if enabled else 'disabled'}.")
-        elif command == "reaction_chance":
-            argument = command_argument(message)
-            if not argument.isdigit() or not 0 <= int(argument) <= 100:
-                await message.reply_text("Usage: /reaction_chance <0-100>")
+        elif command == "reaction":
+            if action in {"on", "off"}:
+                enabled = action == "on"
+                await repository.set_reactions_enabled(chat_id, enabled)
+                await message.reply_text(
+                    f"Random reactions are now {'enabled' if enabled else 'disabled'}."
+                )
+            elif action == "chance":
+                if not value.isdigit() or not 0 <= int(value) <= 100:
+                    await message.reply_text("Usage: /reaction chance <0-100>")
+                else:
+                    await repository.set_reaction_chance(chat_id, int(value))
+                    await message.reply_text(f"Reaction chance set to {value}%.")
+            elif action == "add":
+                if not value or len(value) > 16 or " " in value:
+                    await message.reply_text("Usage: /reaction add <emoji>")
+                else:
+                    result = await repository.add_reaction(chat_id, value)
+                    replies = {
+                        "added": "Reaction added.",
+                        "duplicate": "That reaction already exists.",
+                        "full": f"This group already has the maximum of {MAX_REACTIONS} reactions.",
+                    }
+                    await message.reply_text(replies[result])
+            elif action == "remove":
+                if not value:
+                    await message.reply_text("Usage: /reaction remove <emoji>")
+                else:
+                    removed = await repository.remove_reaction(chat_id, value)
+                    await message.reply_text("Reaction removed." if removed else "Reaction not found.")
+            elif action == "list":
+                document = await repository.get(chat_id)
+                reactions = document.get("reactions", [])
+                output = "Configured reactions: " + (" ".join(reactions) if reactions else "none")
+                await message.reply_text(output)
             else:
-                await repository.set_reaction_chance(chat_id, int(argument))
-                await message.reply_text(f"Reaction chance set to {argument}%.")
-        elif command == "reaction_add":
-            reaction = command_argument(message)
-            if not reaction or len(reaction) > 16 or " " in reaction:
-                await message.reply_text("Usage: /reaction_add <emoji>")
-            else:
-                result = await repository.add_reaction(chat_id, reaction)
-                replies = {
-                    "added": "Reaction added.",
-                    "duplicate": "That reaction already exists.",
-                    "full": f"This group already has the maximum of {MAX_REACTIONS} reactions.",
-                }
-                await message.reply_text(replies[result])
-        elif command == "reaction_remove":
-            reaction = command_argument(message)
-            if not reaction:
-                await message.reply_text("Usage: /reaction_remove <emoji>")
-            else:
-                removed = await repository.remove_reaction(chat_id, reaction)
-                await message.reply_text("Reaction removed." if removed else "Reaction not found.")
-        elif command == "reaction_list":
-            document = await repository.get(chat_id)
-            reactions = document.get("reactions", [])
-            output = "Configured reactions: " + (" ".join(reactions) if reactions else "none")
-            await message.reply_text(output)
+                await message.reply_text("Unknown action. Use /reaction help.")
 
     async def eligible_message(_, __, message: Message) -> bool:
         return bool(
@@ -259,6 +262,7 @@ async def start() -> None:
         api_hash=settings.api_hash,
         bot_token=settings.bot_token,
         in_memory=True,
+        parse_mode=ParseMode.DISABLED,
     )
     register_handlers(app, repository)
 

@@ -46,24 +46,28 @@ View logs with `sudo journalctl -u autoreply -f`.
 Group administrators can use:
 
 - `/autoreply on` and `/autoreply off`
-- `/autoreply_add <text>`
-- `/autoreply_remove <number>`
-- `/autoreply_list`
-- `/autoreply_clear`
-- `/autoreply_status`
-- `/autoreply_help`
-- `/reaction_on` and `/reaction_off`
-- `/reaction_chance <0-100>`
-- `/reaction_add <emoji>`
-- `/reaction_remove <emoji>`
-- `/reaction_list`
+- `/autoreply add <text>`
+- `/autoreply remove <number>`
+- `/autoreply list`
+- `/autoreply clear`
+- `/autoreply status`
+- `/autoreply help`
+- `/reaction on` and `/reaction off`
+- `/reaction chance <0-100>`
+- `/reaction add <emoji>`
+- `/reaction remove <emoji>`
+- `/reaction list`
 
-Commands are admin-only. Commands, service events, and messages sent by other
-bots are ignored. Enabling auto-replies also acts as the master switch for all
-interactions. Random reactions default to a 25% chance.
+Anyone in the group can use `/autoreply` to view the full command catalog.
+Settings commands are admin-only. Commands, service events, and messages sent
+by other bots are ignored. Enabling auto-replies also acts as the master switch
+for all interactions. Random reactions default to a 25% chance.
+
+Automatic Telegram text parsing is disabled, so literal text such as
+`<message>` and angle brackets inside configured replies remains visible.
 
 After adding the bot as an administrator, run `/autoreply on`. Text replies
-also require at least one message added with `/autoreply_add <text>`.
+also require at least one message added with `/autoreply add <text>`.
 The bot registers its command menu during startup and responds to `/start` or
 `/help` in private chat with setup instructions.
 
