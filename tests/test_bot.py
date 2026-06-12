@@ -6,9 +6,12 @@ from pyrogram.enums import ParseMode
 from autoreply.bot import (
     BOT_MENU_COMMANDS,
     COMMAND_CATALOG,
+    START_TEXT,
     choose_reaction,
     command_action,
     command_argument,
+    configured_link,
+    link_keyboard,
 )
 
 
@@ -55,6 +58,9 @@ def test_bot_menu_contains_registered_commands() -> None:
         "help",
         "autoreply",
         "reaction",
+        "updates",
+        "support",
+        "owner_link",
     }
 
 
@@ -65,3 +71,26 @@ def test_disabled_parse_mode_preserves_angle_brackets() -> None:
 def test_autoreply_catalog_contains_reply_and_reaction_commands() -> None:
     assert "/autoreply add <message>" in COMMAND_CATALOG
     assert "/reaction chance <0-100>" in COMMAND_CATALOG
+
+
+def test_start_text_contains_setup_steps() -> None:
+    assert "/autoreply add <message>" in START_TEXT
+    assert "/autoreply on" in START_TEXT
+
+
+def test_link_keyboard_uses_configured_links() -> None:
+    settings = SimpleNamespace(
+        updates="https://t.me/updates",
+        support="https://t.me/support",
+        owner_link="https://t.me/owner",
+    )
+
+    keyboard = link_keyboard(settings)
+
+    assert keyboard is not None
+    assert [row[0].url for row in keyboard.inline_keyboard] == [
+        "https://t.me/updates",
+        "https://t.me/support",
+        "https://t.me/owner",
+    ]
+    assert configured_link(settings, "owner_link") == ("Owner", "https://t.me/owner")

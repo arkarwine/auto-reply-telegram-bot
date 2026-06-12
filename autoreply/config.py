@@ -11,6 +11,9 @@ class Settings:
     bot_token: str
     mongodb_uri: str
     mongodb_database: str
+    updates: str | None
+    support: str | None
+    owner_link: str | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,5 +39,7 @@ class Settings:
             bot_token=required["TELEGRAM_BOT_TOKEN"],
             mongodb_uri=required["MONGODB_URI"],
             mongodb_database=os.getenv("MONGODB_DATABASE", "telegram_autoreply"),
+            updates=os.getenv("UPDATES"),
+            support=os.getenv("SUPPORT"),
+            owner_link=os.getenv("OWNER_LINK"),
         )
-

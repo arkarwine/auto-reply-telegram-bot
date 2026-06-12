@@ -41,6 +41,16 @@ rotates through group-specific replies and sometimes adds a random reaction.
 
 View logs with `sudo journalctl -u autoreply -f`.
 
+Configure the `/start` and `/help` buttons in `.env`:
+
+```env
+UPDATES=https://t.me/your_updates_channel
+SUPPORT=https://t.me/your_support_group
+OWNER_LINK=https://t.me/your_username
+```
+
+The same links are available through `/updates`, `/support`, and `/owner_link`.
+
 ## Group commands
 
 Group administrators can use:

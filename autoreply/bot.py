@@ -4,7 +4,7 @@ import random
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
 from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import BotCommand, Message
+from pyrogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from autoreply.config import Settings
 from autoreply.repository import GroupRepository, MAX_REACTIONS, MAX_RESPONSES
@@ -20,11 +20,24 @@ COMMANDS = [
     "reaction",
 ]
 BOT_MENU_COMMANDS = [
-    BotCommand("start", "Show setup instructions"),
-    BotCommand("help", "Show setup instructions"),
+    BotCommand("start", "Open the bot guide"),
+    BotCommand("help", "Show setup and usage help"),
     BotCommand("autoreply", "Show all available commands"),
     BotCommand("reaction", "Manage reactions: /reaction help"),
+    BotCommand("updates", "Open the updates channel"),
+    BotCommand("support", "Open the support group"),
+    BotCommand("owner_link", "Contact the owner"),
 ]
+START_TEXT = (
+    "Telegram Group Interaction Bot\n\n"
+    "I can keep group chats active with rotating automatic replies and occasional random reactions.\n\n"
+    "Quick setup:\n"
+    "1. Add me to your group as an administrator.\n"
+    "2. Disable privacy mode through BotFather so I can see group messages.\n"
+    "3. Add a reply with /autoreply add <message>.\n"
+    "4. Enable interactions with /autoreply on.\n\n"
+    "Use /autoreply in the group to view every available command."
+)
 COMMAND_CATALOG = (
     "Available commands:\n\n"
     "Replies\n"
@@ -63,6 +76,26 @@ def choose_reaction(chance: int, reactions: list[str]) -> str | None:
     return random.choice(reactions)
 
 
+def link_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
+    buttons = []
+    if settings.updates:
+        buttons.append(InlineKeyboardButton("Updates Channel", url=settings.updates))
+    if settings.support:
+        buttons.append(InlineKeyboardButton("Support Group", url=settings.support))
+    if settings.owner_link:
+        buttons.append(InlineKeyboardButton("Owner", url=settings.owner_link))
+    return InlineKeyboardMarkup([[button] for button in buttons]) if buttons else None
+
+
+def configured_link(settings: Settings, command: str) -> tuple[str, str | None]:
+    links = {
+        "updates": ("Updates channel", settings.updates),
+        "support": ("Support group", settings.support),
+        "owner_link": ("Owner", settings.owner_link),
+    }
+    return links[command]
+
+
 async def is_group_admin(client: Client, message: Message) -> bool:
     if not message.from_user:
         return False
@@ -84,12 +117,20 @@ async def require_admin(client: Client, message: Message) -> bool:
     return allowed
 
 
-def register_handlers(app: Client, repository: GroupRepository) -> None:
+def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
     @app.on_message(filters.private & filters.command(["start", "help"]))
     async def private_help(_: Client, message: Message) -> None:
+        await message.reply_text(START_TEXT, reply_markup=link_keyboard(settings))
+
+    @app.on_message(filters.command(["updates", "support", "owner_link"]))
+    async def link_command(_: Client, message: Message) -> None:
+        label, url = configured_link(settings, message.command[0].lower())
+        if not url:
+            await message.reply_text(f"{label} is not configured.")
+            return
         await message.reply_text(
-            "Add me to a group as an administrator and disable privacy mode with BotFather.\n\n"
-            "Then use /autoreply on and /autoreply add <message> in the group."
+            label,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"Open {label}", url=url)]]),
         )
 
     group_commands = filters.group & filters.command(COMMANDS)
@@ -264,7 +305,7 @@ async def start() -> None:
         in_memory=True,
         parse_mode=ParseMode.DISABLED,
     )
-    register_handlers(app, repository)
+    register_handlers(app, repository, settings)
 
     try:
         await app.start()
