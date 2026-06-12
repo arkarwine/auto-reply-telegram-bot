@@ -11,9 +11,7 @@ class Settings:
     bot_token: str
     mongodb_uri: str
     mongodb_database: str
-    updates: str | None
-    support: str | None
-    owner_link: str | None
+    owner_id: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -23,6 +21,7 @@ class Settings:
             "TELEGRAM_API_HASH": os.getenv("TELEGRAM_API_HASH"),
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
             "MONGODB_URI": os.getenv("MONGODB_URI"),
+            "OWNER_ID": os.getenv("OWNER_ID"),
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
@@ -30,8 +29,9 @@ class Settings:
 
         try:
             api_id = int(required["TELEGRAM_API_ID"])
+            owner_id = int(required["OWNER_ID"])
         except ValueError as exc:
-            raise RuntimeError("TELEGRAM_API_ID must be an integer") from exc
+            raise RuntimeError("TELEGRAM_API_ID and OWNER_ID must be integers") from exc
 
         return cls(
             api_id=api_id,
@@ -39,7 +39,5 @@ class Settings:
             bot_token=required["TELEGRAM_BOT_TOKEN"],
             mongodb_uri=required["MONGODB_URI"],
             mongodb_database=os.getenv("MONGODB_DATABASE", "telegram_autoreply"),
-            updates=os.getenv("UPDATES"),
-            support=os.getenv("SUPPORT"),
-            owner_link=os.getenv("OWNER_LINK"),
+            owner_id=owner_id,
         )

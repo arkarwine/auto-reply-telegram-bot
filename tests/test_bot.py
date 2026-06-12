@@ -10,8 +10,8 @@ from autoreply.bot import (
     choose_reaction,
     command_action,
     command_argument,
-    configured_link,
     link_keyboard,
+    valid_link,
 )
 
 
@@ -79,13 +79,13 @@ def test_start_text_contains_setup_steps() -> None:
 
 
 def test_link_keyboard_uses_configured_links() -> None:
-    settings = SimpleNamespace(
-        updates="https://t.me/updates",
-        support="https://t.me/support",
-        owner_link="https://t.me/owner",
+    keyboard = link_keyboard(
+        {
+            "updates": "https://t.me/updates",
+            "support": "https://t.me/support",
+            "owner_link": "https://t.me/owner",
+        }
     )
-
-    keyboard = link_keyboard(settings)
 
     assert keyboard is not None
     assert [row[0].url for row in keyboard.inline_keyboard] == [
@@ -93,4 +93,9 @@ def test_link_keyboard_uses_configured_links() -> None:
         "https://t.me/support",
         "https://t.me/owner",
     ]
-    assert configured_link(settings, "owner_link") == ("Owner", "https://t.me/owner")
+
+
+def test_link_validation() -> None:
+    assert valid_link("https://t.me/example")
+    assert valid_link("tg://user?id=123")
+    assert not valid_link("@example")

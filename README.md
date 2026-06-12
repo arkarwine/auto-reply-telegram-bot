@@ -41,15 +41,20 @@ rotates through group-specific replies and sometimes adds a random reaction.
 
 View logs with `sudo journalctl -u autoreply -f`.
 
-Configure the `/start` and `/help` buttons in `.env`:
+Set your numeric Telegram user ID in `.env`:
 
 ```env
-UPDATES=https://t.me/your_updates_channel
-SUPPORT=https://t.me/your_support_group
-OWNER_LINK=https://t.me/your_username
+OWNER_ID=123456789
 ```
 
-The same links are available through `/updates`, `/support`, and `/owner_link`.
+The owner can configure the `/start` and `/help` buttons in private chat:
+
+- `/updates <url>` or `/updates off`
+- `/support <url>` or `/support off`
+- `/owner_link <url>` or `/owner_link off`
+
+Calling one without a URL displays its current value. Links are persisted in
+MongoDB.
 
 ## Group commands
 

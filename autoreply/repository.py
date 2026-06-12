@@ -13,6 +13,7 @@ class GroupRepository:
     def __init__(self, mongodb_uri: str, database_name: str) -> None:
         self.client = AsyncMongoClient(mongodb_uri)
         self.collection = self.client[database_name]["groups"]
+        self.settings_collection = self.client[database_name]["bot_settings"]
 
     async def ping(self) -> None:
         await self.client.admin.command("ping")
@@ -199,3 +200,17 @@ class GroupRepository:
             document.get("reaction_chance", DEFAULT_REACTION_CHANCE),
             document.get("reactions", DEFAULT_REACTIONS),
         )
+
+    async def get_links(self) -> dict[str, str]:
+        document = await self.settings_collection.find_one({"_id": "links"})
+        if not document:
+            return {}
+        return {
+            key: document[key]
+            for key in ("updates", "support", "owner_link")
+            if document.get(key)
+        }
+
+    async def set_link(self, name: str, url: str | None) -> None:
+        update = {"$set": {name: url}} if url else {"$unset": {name: ""}}
+        await self.settings_collection.update_one({"_id": "links"}, update, upsert=True)

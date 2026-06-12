@@ -24,9 +24,9 @@ BOT_MENU_COMMANDS = [
     BotCommand("help", "Show setup and usage help"),
     BotCommand("autoreply", "Show all available commands"),
     BotCommand("reaction", "Manage reactions: /reaction help"),
-    BotCommand("updates", "Open the updates channel"),
-    BotCommand("support", "Open the support group"),
-    BotCommand("owner_link", "Contact the owner"),
+    BotCommand("updates", "Owner: configure updates button"),
+    BotCommand("support", "Owner: configure support button"),
+    BotCommand("owner_link", "Owner: configure owner button"),
 ]
 START_TEXT = (
     "Telegram Group Interaction Bot\n\n"
@@ -76,24 +76,19 @@ def choose_reaction(chance: int, reactions: list[str]) -> str | None:
     return random.choice(reactions)
 
 
-def link_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
+def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
     buttons = []
-    if settings.updates:
-        buttons.append(InlineKeyboardButton("Updates Channel", url=settings.updates))
-    if settings.support:
-        buttons.append(InlineKeyboardButton("Support Group", url=settings.support))
-    if settings.owner_link:
-        buttons.append(InlineKeyboardButton("Owner", url=settings.owner_link))
+    if links.get("updates"):
+        buttons.append(InlineKeyboardButton("Updates Channel", url=links["updates"]))
+    if links.get("support"):
+        buttons.append(InlineKeyboardButton("Support Group", url=links["support"]))
+    if links.get("owner_link"):
+        buttons.append(InlineKeyboardButton("Owner", url=links["owner_link"]))
     return InlineKeyboardMarkup([[button] for button in buttons]) if buttons else None
 
 
-def configured_link(settings: Settings, command: str) -> tuple[str, str | None]:
-    links = {
-        "updates": ("Updates channel", settings.updates),
-        "support": ("Support group", settings.support),
-        "owner_link": ("Owner", settings.owner_link),
-    }
-    return links[command]
+def valid_link(value: str) -> bool:
+    return value.startswith(("https://", "http://", "tg://"))
 
 
 async def is_group_admin(client: Client, message: Message) -> bool:
@@ -120,18 +115,29 @@ async def require_admin(client: Client, message: Message) -> bool:
 def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
     @app.on_message(filters.private & filters.command(["start", "help"]))
     async def private_help(_: Client, message: Message) -> None:
-        await message.reply_text(START_TEXT, reply_markup=link_keyboard(settings))
+        links = await repository.get_links()
+        await message.reply_text(START_TEXT, reply_markup=link_keyboard(links))
 
-    @app.on_message(filters.command(["updates", "support", "owner_link"]))
+    @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
-        label, url = configured_link(settings, message.command[0].lower())
-        if not url:
-            await message.reply_text(f"{label} is not configured.")
+        if not message.from_user or message.from_user.id != settings.owner_id:
+            await message.reply_text("Only the bot owner can configure start-menu links.")
             return
-        await message.reply_text(
-            label,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"Open {label}", url=url)]]),
-        )
+
+        name = message.command[0].lower()
+        value = command_argument(message)
+        labels = {"updates": "Updates channel", "support": "Support group", "owner_link": "Owner"}
+        if not value:
+            current = (await repository.get_links()).get(name, "not configured")
+            await message.reply_text(f"{labels[name]}: {current}\nUsage: /{name} <url> or /{name} off")
+        elif value.lower() == "off":
+            await repository.set_link(name, None)
+            await message.reply_text(f"{labels[name]} button removed.")
+        elif not valid_link(value):
+            await message.reply_text("Link must start with https://, http://, or tg://")
+        else:
+            await repository.set_link(name, value)
+            await message.reply_text(f"{labels[name]} button updated.")
 
     group_commands = filters.group & filters.command(COMMANDS)
 
