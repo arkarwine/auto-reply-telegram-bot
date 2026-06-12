@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram Group Interaction Bot
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=autoreply
+Group=autoreply
+WorkingDirectory=/opt/autoreply
+EnvironmentFile=/opt/autoreply/.env
+ExecStart=/opt/autoreply/.venv/bin/python -m autoreply
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

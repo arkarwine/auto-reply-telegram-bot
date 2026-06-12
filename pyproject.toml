@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-auto-reply"
+version = "0.1.0"
+description = "A Telegram group interaction bot built with Kurigram and MongoDB"
+requires-python = ">=3.11"
+dependencies = [
+    "kurigram>=2.2,<3",
+    "pymongo>=4.11,<5",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
