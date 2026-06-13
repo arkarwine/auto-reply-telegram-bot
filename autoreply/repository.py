@@ -376,20 +376,6 @@ class GroupRepository:
             upsert=True,
         )
 
-    async def set_broadcast_capture(self, user_id: int) -> None:
-        await self.states_collection.update_one(
-            {"_id": user_id},
-            {
-                "$set": {"capture_broadcast": True},
-                "$unset": {"capture_chat_id": "", "capture_global": "", "pending_broadcast": ""},
-            },
-            upsert=True,
-        )
-
-    async def is_broadcast_capture(self, user_id: int) -> bool:
-        document = await self.states_collection.find_one({"_id": user_id})
-        return bool(document and document.get("capture_broadcast"))
-
     async def set_pending_broadcast(self, user_id: int, response: Any) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},

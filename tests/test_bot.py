@@ -10,7 +10,9 @@ from autoreply.bot import (
     PUBLIC_BOT_COMMANDS,
     SUDOER_BOT_COMMANDS,
     SUDOER_HELP_TEXT,
+    SUDOER_PANEL_TEXT,
     START_TEXT,
+    broadcast_source,
     broadcast_response,
     chance_succeeds,
     choose_reaction,
@@ -31,6 +33,7 @@ from autoreply.bot import (
     retry_flood_wait,
     saved_reply_keyboard,
     send_response,
+    sudoer_panel_keyboard,
     start_image_file_id,
     truncate_label,
     next_option,
@@ -52,6 +55,23 @@ def test_command_argument_handles_missing_argument() -> None:
 def test_command_argument_supports_autoreply_action() -> None:
     message = SimpleNamespace(text="/autoreply off")
     assert command_argument(message) == "off"
+
+
+def test_broadcast_source_accepts_text_argument_or_replied_message() -> None:
+    text_message = SimpleNamespace(text="/broadcast Hello groups", reply_to_message=None)
+    replied_message = SimpleNamespace(
+        text="/broadcast",
+        reply_to_message=SimpleNamespace(chat=SimpleNamespace(id=123), id=42),
+    )
+    empty_message = SimpleNamespace(text="/broadcast", reply_to_message=None)
+
+    assert broadcast_source(text_message) == "Hello groups"
+    assert broadcast_source(replied_message) == {
+        "kind": "message",
+        "chat_id": 123,
+        "message_id": 42,
+    }
+    assert broadcast_source(empty_message) is None
 
 
 def test_is_sudoer_accepts_owner_and_extra_sudoers() -> None:
@@ -209,12 +229,30 @@ async def test_broadcast_response_copies_to_every_known_group() -> None:
         sent, failed = await broadcast_response(
             client,
             FakeRepository(),
-            {"chat_id": 123, "message_id": 42},
+            {"kind": "message", "chat_id": 123, "message_id": 42},
         )
 
     assert (sent, failed) == (21, 0)
     assert [call["chat_id"] for call in client.calls] == list(range(21))
     sleep.assert_awaited_once_with(3)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_response_sends_text_parameter() -> None:
+    class FakeRepository:
+        async def group_ids(self):
+            return [-1001]
+
+    class FakeClient:
+        def __init__(self):
+            self.arguments = None
+
+        async def send_message(self, **kwargs):
+            self.arguments = kwargs
+
+    client = FakeClient()
+    assert await broadcast_response(client, FakeRepository(), "Hello groups") == (1, 0)
+    assert client.arguments == {"chat_id": -1001, "text": "Hello groups"}
 
 
 def test_response_label_preserves_existing_text_responses() -> None:
@@ -360,6 +398,24 @@ def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:
     keyboard = link_keyboard({})
     assert keyboard is not None
     assert [row[0].text for row in keyboard.inline_keyboard] == ["❓ Help"]
+
+
+def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
+    regular = link_keyboard({}, "example_bot")
+    sudoer = link_keyboard({}, "example_bot", show_sudoer=True)
+
+    regular_labels = [button.text for row in regular.inline_keyboard for button in row]
+    sudoer_labels = [button.text for row in sudoer.inline_keyboard for button in row]
+
+    assert "🛡 Sudo Panel" not in regular_labels
+    assert "🛡 Sudo Panel" in sudoer_labels
+    assert "/broadcast <text>" in SUDOER_PANEL_TEXT
+
+
+def test_sudoer_panel_has_privileged_shortcuts() -> None:
+    labels = [button.text for row in sudoer_panel_keyboard().inline_keyboard for button in row]
+
+    assert labels == ["🌐 Global Replies", "📣 Broadcast Help", "⬅️ Back"]
 
 
 def test_link_validation() -> None:

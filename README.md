@@ -80,10 +80,10 @@ cannot delete or change them.
 New global replies become available immediately in every enabled group with
 global replies turned on, including groups without a saved local reply.
 
-Owner and sudoers can use `/broadcast` in private chat, send any Telegram
-message, then confirm delivery to every known group. Broadcasts retry flood
-waits and report sent/failed totals. Delivery pauses for 3 seconds after every
-batch of 20 groups.
+Owner and sudoers can use `/broadcast <text>` in private chat, or reply to any
+Telegram message with `/broadcast`, then confirm delivery to every known group.
+Broadcasts retry flood waits and report sent/failed totals. Delivery pauses for
+3 seconds after every batch of 20 groups.
 
 ## Private configuration
 
@@ -133,7 +133,8 @@ The bot registers its command menu during startup and responds to `/start` or
 `/help` in private chat with setup instructions. `/start` always includes a
 Help button and an **Add to Group** button; updates, support, and owner buttons
 are shown only when configured. Sudoer commands are hidden from the public
-command menu and registered only in each owner/sudoer's private chat.
+command menu and registered only in each owner/sudoer's private chat. Owner and
+sudoers also receive a private **Sudo Panel** button on the start menu.
 
 ## Tests
 

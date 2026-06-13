@@ -73,6 +73,14 @@ SUDOER_HELP_TEXT = (
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
 )
+SUDOER_PANEL_TEXT = (
+    "🛡 Sudo Panel\n\n"
+    "🌐 /global_defaults — global replies\n"
+    "📣 /broadcast <text> — broadcast text\n"
+    "📣 Reply with /broadcast — broadcast a message\n"
+    "🖼 /start_img — start image\n"
+    "🔗 /updates, /support, /owner_link — menu links"
+)
 MANAGER_DELETE_DELAY = 30
 BROADCAST_BATCH_SIZE = 20
 BROADCAST_BATCH_DELAY_SECONDS = 3
@@ -88,6 +96,19 @@ T = TypeVar("T")
 def command_argument(message: Message) -> str:
     text = message.text or ""
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
+
+
+def broadcast_source(message: Message) -> object | None:
+    argument = command_argument(message)
+    if argument:
+        return argument
+    if message.reply_to_message:
+        return {
+            "kind": "message",
+            "chat_id": message.reply_to_message.chat.id,
+            "message_id": message.reply_to_message.id,
+        }
+    return None
 
 
 def choose_reaction(chance: int, reactions: list[str]) -> str | None:
@@ -133,7 +154,11 @@ async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2)
     raise RuntimeError("unreachable")
 
 
-def link_keyboard(links: dict[str, str], username: str | None = None) -> InlineKeyboardMarkup:
+def link_keyboard(
+    links: dict[str, str],
+    username: str | None = None,
+    show_sudoer: bool = False,
+) -> InlineKeyboardMarkup:
     rows = []
     if username:
         rows.append(
@@ -153,7 +178,44 @@ def link_keyboard(links: dict[str, str], username: str | None = None) -> InlineK
     if links.get("owner_link"):
         buttons.append(InlineKeyboardButton("👤 Owner", url=links["owner_link"]))
     rows.extend(buttons[index : index + 2] for index in range(0, len(buttons), 2))
+    if show_sudoer:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🛡 Sudo Panel",
+                    callback_data="start:sudo",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ]
+        )
     return InlineKeyboardMarkup(rows)
+
+
+def sudoer_panel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🌐 Global Replies",
+                    callback_data="global:open",
+                    style=ButtonStyle.PRIMARY,
+                ),
+                InlineKeyboardButton("📣 Broadcast Help", callback_data="start:broadcast-help"),
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="start:back")],
+        ]
+    )
+
+
+async def show_callback_menu(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    if message.text:
+        await message.edit_text(text, reply_markup=reply_markup)
+    else:
+        await message.reply_text(text, reply_markup=reply_markup)
 
 
 async def register_bot_commands(app: Client, settings: Settings) -> None:
@@ -361,20 +423,27 @@ async def send_response(client: Client, incoming: Message, response: object) -> 
 async def broadcast_response(
     client: Client,
     repository: GroupRepository,
-    response: dict,
+    response: object,
 ) -> tuple[int, int]:
     sent = 0
     failed = 0
     group_ids = await repository.group_ids()
     for position, chat_id in enumerate(group_ids):
         try:
-            await retry_flood_wait(
-                lambda chat_id=chat_id: client.copy_message(
-                    chat_id=chat_id,
-                    from_chat_id=response["chat_id"],
-                    message_id=response["message_id"],
+            if isinstance(response, str):
+                await retry_flood_wait(
+                    lambda chat_id=chat_id: client.send_message(chat_id=chat_id, text=response)
                 )
-            )
+            elif isinstance(response, dict) and response.get("kind") == "message":
+                await retry_flood_wait(
+                    lambda chat_id=chat_id: client.copy_message(
+                        chat_id=chat_id,
+                        from_chat_id=response["chat_id"],
+                        message_id=response["message_id"],
+                    )
+                )
+            else:
+                raise ValueError("Unsupported broadcast response")
             sent += 1
         except (Forbidden, ChatAdminRequired):
             failed += 1
@@ -658,7 +727,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         links = await repository.get_links()
         me = await client.get_me()
-        keyboard = link_keyboard(links, me.username)
+        keyboard = link_keyboard(links, me.username, is_sudoer(settings, message))
         if message.command and message.command[0].lower() == "help":
             help_text = SUDOER_HELP_TEXT if is_sudoer(settings, message) else HELP_TEXT
             await message.reply_text(help_text, reply_markup=keyboard)
@@ -680,6 +749,38 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await query.message.reply_text(help_text)
         await query.answer()
 
+    @app.on_callback_query(filters.regex(r"^start:(sudo|broadcast-help|back)$"))
+    async def start_panel_callback(client: Client, query: CallbackQuery) -> None:
+        if not query.message:
+            return
+        action = query.data.split(":", 1)[1]
+        if action == "back":
+            links = await repository.get_links()
+            me = await client.get_me()
+            await show_callback_menu(
+                query.message,
+                START_TEXT,
+                link_keyboard(links, me.username, query_is_sudoer(settings, query)),
+            )
+            await query.answer()
+            return
+        if not query_is_sudoer(settings, query):
+            await query.answer("⛔ Sudoers only.", show_alert=True)
+            return
+        if action == "broadcast-help":
+            await show_callback_menu(
+                query.message,
+                "📣 Broadcast\n\n"
+                "/broadcast <text>\n"
+                "Or reply to any message with /broadcast.",
+                InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Sudo Panel", callback_data="start:sudo")]]
+                ),
+            )
+        else:
+            await show_callback_menu(query.message, SUDOER_PANEL_TEXT, sudoer_panel_keyboard())
+        await query.answer()
+
     @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
     async def private_manager_hint(_: Client, message: Message) -> None:
         await message.reply_text("⚙️ Send /autoreply in your group.")
@@ -697,8 +798,30 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         if not is_sudoer(settings, message):
             await message.reply_text("⛔ Sudoers only.")
             return
-        await repository.set_broadcast_capture(message.from_user.id)
-        await message.reply_text("📣 Send any message to broadcast.\n\n/cancel to stop.")
+        response = broadcast_source(message)
+        if response is None:
+            await message.reply_text(
+                "📣 Usage:\n/broadcast <text>\n\nOr reply to any message with /broadcast."
+            )
+            return
+        await repository.set_pending_broadcast(message.from_user.id, response)
+        group_count = len(await repository.group_ids())
+        await message.reply_text(
+            f"📣 Send this to {group_count} known groups?\n\n"
+            f"⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per {BROADCAST_BATCH_SIZE} groups",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "📣 Broadcast",
+                            callback_data="broadcast:send",
+                            style=ButtonStyle.SUCCESS,
+                        ),
+                        InlineKeyboardButton("✖️ Cancel", callback_data="broadcast:cancel"),
+                    ]
+                ]
+            ),
+        )
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
@@ -1071,46 +1194,12 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def capture_private_message(client: Client, message: Message) -> None:
         if not message.from_user:
             return
-        broadcast_capture = (
-            settings.is_sudoer(message.from_user.id)
-            and await repository.is_broadcast_capture(message.from_user.id)
-        )
         global_capture = (
             settings.is_sudoer(message.from_user.id)
             and await repository.is_global_capture(message.from_user.id)
         )
         chat_id = await repository.get_capture_group(message.from_user.id)
-        if chat_id is None and not global_capture and not broadcast_capture:
-            return
-        if broadcast_capture:
-            response = {
-                "kind": "message",
-                "chat_id": message.chat.id,
-                "message_id": message.id,
-                "label": message_label(message),
-                "has_preview": bool(message.text or message.caption),
-            }
-            await repository.set_pending_broadcast(message.from_user.id, response)
-            group_count = len(await repository.group_ids())
-            await message.reply_text(
-                f"📣 Send this message to {group_count} known groups?\n\n"
-                f"⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per {BROADCAST_BATCH_SIZE} groups",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "📣 Broadcast",
-                                callback_data="broadcast:send",
-                                style=ButtonStyle.SUCCESS,
-                            ),
-                            InlineKeyboardButton(
-                                "✖️ Cancel",
-                                callback_data="broadcast:cancel",
-                            ),
-                        ]
-                    ]
-                ),
-            )
+        if chat_id is None and not global_capture:
             return
         if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
             await repository.clear_capture_group(message.from_user.id)
