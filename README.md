@@ -62,6 +62,10 @@ The owner can configure the `/start` and `/help` buttons in private chat:
 Calling one without a URL displays its current value. Links are persisted in
 MongoDB.
 
+The owner can attach a photo to the `/start` and `/help` menu by sending a
+photo with `/start_img` as its caption, or by replying to a photo with
+`/start_img`. Use `/start_img off` to remove it.
+
 The owner can open `/global_defaults` in private chat to manage global replies.
 Every enabled group rotates through its local replies and the global replies
 together. Group administrators can see global replies in **View Replies**, but
@@ -78,8 +82,23 @@ The private manager lets admins:
 - Add any copyable Telegram message as a reply.
 - View, delete, or clear replies.
 - Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%.
+- Configure a group cooldown of 0, 5, 15, 30, or 60 seconds.
+- Configure a rate limit of unlimited, 5, 10, 20, or 30 interactions per minute.
 - Enable or disable reactions.
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
+- Enable or disable global replies for the group.
+- Exclude individual global replies from the group.
+
+Replies are selected randomly from the group's local replies and its allowed
+global replies. Reply lists are paginated. Clearing local or global replies
+requires confirmation.
+
+Telegram flood waits are retried automatically. If Telegram reports that the
+bot can no longer access or interact with a group, interactions for that group
+are disabled automatically until an administrator enables them again.
+
+Inline manager buttons use Telegram's primary, success, and danger accents to
+distinguish navigation, enabling/add actions, and destructive actions.
 
 Configuration changes happen entirely in private chat. Commands, service
 events, and messages sent by other bots are ignored.

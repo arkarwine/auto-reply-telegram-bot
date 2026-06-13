@@ -1,6 +1,7 @@
 from typing import Any
+import random
 
-from pymongo import AsyncMongoClient, ReturnDocument
+from pymongo import AsyncMongoClient
 
 
 MAX_RESPONSES = 100
@@ -8,6 +9,8 @@ MAX_REACTIONS = 20
 DEFAULT_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀"]
 DEFAULT_REACTION_CHANCE = 25
 DEFAULT_REPLY_CHANCE = 100
+DEFAULT_COOLDOWN_SECONDS = 5
+DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 
 
 class GroupRepository:
@@ -31,6 +34,10 @@ class GroupRepository:
             "responses": [],
             "next_index": 0,
             "reply_chance": DEFAULT_REPLY_CHANCE,
+            "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
+            "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
+            "global_replies_enabled": True,
+            "excluded_global_responses": [],
             "reactions_enabled": True,
             "reaction_chance": DEFAULT_REACTION_CHANCE,
             "reactions": list(DEFAULT_REACTIONS),
@@ -46,6 +53,10 @@ class GroupRepository:
                     "responses": [],
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
+                    "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
+                    "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
+                    "global_replies_enabled": True,
+                    "excluded_global_responses": [],
                     "reactions_enabled": True,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
@@ -70,6 +81,10 @@ class GroupRepository:
                     "enabled": False,
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
+                    "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
+                    "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
+                    "global_replies_enabled": True,
+                    "excluded_global_responses": [],
                     "reactions_enabled": True,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
@@ -105,18 +120,21 @@ class GroupRepository:
 
     async def next_response(self, chat_id: int) -> Any | None:
         global_responses = await self.get_global_responses()
-        document = await self.collection.find_one_and_update(
+        document = await self.collection.find_one(
             {"_id": chat_id, "enabled": True},
-            {"$inc": {"next_index": 1}},
-            return_document=ReturnDocument.BEFORE,
         )
         if not document:
             return None
 
+        if not document.get("global_replies_enabled", True):
+            global_responses = []
+        else:
+            excluded = document.get("excluded_global_responses", [])
+            global_responses = [response for response in global_responses if response not in excluded]
         responses = document.get("responses", []) + global_responses
         if not responses:
             return None
-        return responses[document.get("next_index", 0) % len(responses)]
+        return random.choice(responses)
 
     async def reply_chance(self, chat_id: int) -> int | None:
         document = await self.collection.find_one(
@@ -141,6 +159,46 @@ class GroupRepository:
             },
             upsert=True,
         )
+
+    async def set_cooldown(self, chat_id: int, seconds: int) -> None:
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"cooldown_seconds": seconds}},
+            upsert=True,
+        )
+
+    async def set_rate_limit(self, chat_id: int, per_minute: int) -> None:
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"rate_limit_per_minute": per_minute}},
+            upsert=True,
+        )
+
+    async def toggle_global_replies(self, chat_id: int) -> bool:
+        document = await self.get(chat_id)
+        enabled = not document.get("global_replies_enabled", True)
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"global_replies_enabled": enabled}},
+            upsert=True,
+        )
+        return enabled
+
+    async def toggle_global_exclusion(self, chat_id: int, response: Any) -> bool:
+        document = await self.get(chat_id)
+        excluded = list(document.get("excluded_global_responses", []))
+        if response in excluded:
+            excluded.remove(response)
+            is_excluded = False
+        else:
+            excluded.append(response)
+            is_excluded = True
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"excluded_global_responses": excluded}},
+            upsert=True,
+        )
+        return is_excluded
 
     async def get_global_responses(self) -> list[Any]:
         document = await self.settings_collection.find_one({"_id": "global_responses"})
@@ -272,6 +330,20 @@ class GroupRepository:
     async def set_link(self, name: str, url: str | None) -> None:
         update = {"$set": {name: url}} if url else {"$unset": {name: ""}}
         await self.settings_collection.update_one({"_id": "links"}, update, upsert=True)
+
+    async def get_start_image(self) -> str | None:
+        document = await self.settings_collection.find_one({"_id": "start_image"})
+        return document.get("file_id") if document else None
+
+    async def set_start_image(self, file_id: str | None) -> None:
+        if file_id:
+            await self.settings_collection.update_one(
+                {"_id": "start_image"},
+                {"$set": {"file_id": file_id}},
+                upsert=True,
+            )
+        else:
+            await self.settings_collection.delete_one({"_id": "start_image"})
 
     async def set_capture_group(self, user_id: int, chat_id: int) -> None:
         await self.states_collection.update_one(

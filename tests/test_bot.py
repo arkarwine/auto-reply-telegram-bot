@@ -2,7 +2,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ButtonStyle, ParseMode
+from pyrogram.errors import FloodWait
 
 from autoreply.bot import (
     BOT_MENU_COMMANDS,
@@ -12,12 +13,16 @@ from autoreply.bot import (
     command_argument,
     display_response_label,
     global_manager_keyboard,
+    interaction_allowed,
     link_keyboard,
     manager_keyboard,
     message_label,
     response_label,
+    retry_flood_wait,
     saved_reply_keyboard,
     send_response,
+    start_image_file_id,
+    next_option,
     valid_link,
 )
 
@@ -61,6 +66,38 @@ def test_reply_chance_check() -> None:
         assert chance_succeeds(25)
 
 
+def test_interaction_cooldown_and_rate_limit() -> None:
+    from autoreply import bot
+
+    bot._last_interaction.clear()
+    bot._recent_interactions.clear()
+    assert interaction_allowed(1, cooldown=5, per_minute=2, now=100)
+    assert not interaction_allowed(1, cooldown=5, per_minute=2, now=102)
+    assert interaction_allowed(1, cooldown=5, per_minute=2, now=106)
+    assert not interaction_allowed(1, cooldown=0, per_minute=2, now=107)
+    assert interaction_allowed(1, cooldown=0, per_minute=2, now=161)
+
+
+def test_next_option_cycles_manager_values() -> None:
+    assert next_option(5, [0, 5, 15]) == 15
+    assert next_option(15, [0, 5, 15]) == 0
+
+
+@pytest.mark.asyncio
+async def test_flood_wait_is_retried() -> None:
+    attempts = 0
+
+    async def action():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FloodWait(0)
+        return "ok"
+
+    assert await retry_flood_wait(action) == "ok"
+    assert attempts == 2
+
+
 def test_bot_menu_contains_registered_commands() -> None:
     assert {command.command for command in BOT_MENU_COMMANDS} == {
         "start",
@@ -70,6 +107,7 @@ def test_bot_menu_contains_registered_commands() -> None:
         "support",
         "owner_link",
         "global_defaults",
+        "start_img",
     }
 
 
@@ -175,6 +213,9 @@ def test_manager_keyboard_contains_private_controls() -> None:
             "reactions_enabled": True,
             "reply_chance": 75,
             "reaction_chance": 25,
+            "cooldown_seconds": 5,
+            "rate_limit_per_minute": 10,
+            "global_replies_enabled": True,
         },
     )
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
@@ -184,6 +225,13 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "Enable" in labels
     assert "Reply Chance: 75%" in labels
     assert "Reaction Chance: 25%" in labels
+    assert "Cooldown: 5s" in labels
+    assert "Rate: 10/min" in labels
+    assert "Global Replies On" in labels
+    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
+    assert styles["Add Reply"] == ButtonStyle.SUCCESS
+    assert styles["Enable"] == ButtonStyle.SUCCESS
+    assert styles["Clear Local Replies"] == ButtonStyle.DANGER
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:
@@ -198,3 +246,17 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == ["Add Global Reply", "View Global Replies", "Clear Global Replies"]
+
+
+def test_start_image_file_id_accepts_attached_or_replied_photo() -> None:
+    attached = SimpleNamespace(
+        photo=SimpleNamespace(file_id="attached"),
+        reply_to_message=None,
+    )
+    replied = SimpleNamespace(
+        photo=None,
+        reply_to_message=SimpleNamespace(photo=SimpleNamespace(file_id="replied")),
+    )
+
+    assert start_image_file_id(attached) == "attached"
+    assert start_image_file_id(replied) == "replied"

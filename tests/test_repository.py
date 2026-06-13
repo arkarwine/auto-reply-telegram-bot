@@ -1,4 +1,5 @@
 from copy import deepcopy
+from unittest.mock import patch
 
 import pytest
 
@@ -60,7 +61,7 @@ def repository_with(document, global_responses=None) -> GroupRepository:
 
 
 @pytest.mark.asyncio
-async def test_next_response_rotates_in_order() -> None:
+async def test_next_response_chooses_randomly() -> None:
     repository = repository_with(
         {
             "_id": 123,
@@ -70,10 +71,9 @@ async def test_next_response_rotates_in_order() -> None:
         }
     )
 
-    assert await repository.next_response(123) == "one"
-    assert await repository.next_response(123) == "two"
-    assert await repository.next_response(123) == "three"
-    assert await repository.next_response(123) == "one"
+    with patch("autoreply.repository.random.choice", return_value="three") as choice:
+        assert await repository.next_response(123) == "three"
+    choice.assert_called_once_with(["one", "two", "three"])
 
 
 @pytest.mark.asyncio
@@ -101,8 +101,9 @@ async def test_next_response_uses_global_replies_when_group_has_none() -> None:
         global_responses=["global one", "global two"],
     )
 
-    assert await repository.next_response(123) == "global one"
-    assert await repository.next_response(123) == "global two"
+    with patch("autoreply.repository.random.choice", return_value="global two") as choice:
+        assert await repository.next_response(123) == "global two"
+    choice.assert_called_once_with(["global one", "global two"])
 
 
 @pytest.mark.asyncio
@@ -112,9 +113,9 @@ async def test_next_response_combines_local_and_global_replies() -> None:
         global_responses=["global"],
     )
 
-    assert await repository.next_response(123) == "local"
-    assert await repository.next_response(123) == "global"
-    assert await repository.next_response(123) == "local"
+    with patch("autoreply.repository.random.choice", return_value="global") as choice:
+        assert await repository.next_response(123) == "global"
+    choice.assert_called_once_with(["local", "global"])
 
 
 @pytest.mark.asyncio

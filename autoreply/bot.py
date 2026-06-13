@@ -1,10 +1,14 @@
 import logging
 import random
 import asyncio
+from collections import defaultdict, deque
+from time import monotonic
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
-from pyrogram.errors import FloodWait, RPCError
+from pyrogram.enums import ButtonStyle, ChatMemberStatus, ChatType, ParseMode
+from pyrogram.errors import ChatAdminRequired, FloodWait, Forbidden, RPCError
 from pyrogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from autoreply.config import Settings
@@ -28,6 +32,7 @@ BOT_MENU_COMMANDS = [
     BotCommand("support", "Owner: configure support button"),
     BotCommand("owner_link", "Owner: configure owner button"),
     BotCommand("global_defaults", "Owner: manage global default replies"),
+    BotCommand("start_img", "Owner: configure start-menu image"),
 ]
 START_TEXT = (
     "Telegram Group Interaction Bot\n\n"
@@ -40,6 +45,12 @@ START_TEXT = (
     "All configuration happens privately, keeping the group clean."
 )
 MANAGER_DELETE_DELAY = 30
+REPLIES_PER_PAGE = 5
+COOLDOWN_OPTIONS = [0, 5, 15, 30, 60]
+RATE_LIMIT_OPTIONS = [0, 5, 10, 20, 30]
+_last_interaction: dict[int, float] = {}
+_recent_interactions: dict[int, deque[float]] = defaultdict(deque)
+T = TypeVar("T")
 
 
 def command_argument(message: Message) -> str:
@@ -57,12 +68,48 @@ def chance_succeeds(chance: int) -> bool:
     return random.randint(1, 100) <= chance
 
 
+def next_option(current: int, options: list[int]) -> int:
+    try:
+        return options[(options.index(current) + 1) % len(options)]
+    except ValueError:
+        return options[0]
+
+
+def interaction_allowed(chat_id: int, cooldown: int, per_minute: int, now: float | None = None) -> bool:
+    current = monotonic() if now is None else now
+    if cooldown and current - _last_interaction.get(chat_id, float("-inf")) < cooldown:
+        return False
+    recent = _recent_interactions[chat_id]
+    while recent and current - recent[0] >= 60:
+        recent.popleft()
+    if per_minute and len(recent) >= per_minute:
+        return False
+    _last_interaction[chat_id] = current
+    recent.append(current)
+    return True
+
+
+async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2) -> T:
+    for attempt in range(retries + 1):
+        try:
+            return await action()
+        except FloodWait as exc:
+            if attempt == retries:
+                raise
+            await asyncio.sleep(exc.value)
+    raise RuntimeError("unreachable")
+
+
 def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
     buttons = []
     if links.get("updates"):
-        buttons.append(InlineKeyboardButton("Updates Channel", url=links["updates"]))
+        buttons.append(
+            InlineKeyboardButton("Updates Channel", url=links["updates"], style=ButtonStyle.PRIMARY)
+        )
     if links.get("support"):
-        buttons.append(InlineKeyboardButton("Support Group", url=links["support"]))
+        buttons.append(
+            InlineKeyboardButton("Support Group", url=links["support"], style=ButtonStyle.SUCCESS)
+        )
     if links.get("owner_link"):
         buttons.append(InlineKeyboardButton("Owner", url=links["owner_link"]))
     return InlineKeyboardMarkup([[button] for button in buttons]) if buttons else None
@@ -70,6 +117,11 @@ def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
 
 def valid_link(value: str) -> bool:
     return value.startswith(("https://", "http://", "tg://"))
+
+
+def start_image_file_id(message: Message) -> str | None:
+    source = message if message.photo else message.reply_to_message
+    return source.photo.file_id if source and source.photo else None
 
 
 def message_label(message: Message, limit: int = 80) -> str:
@@ -150,12 +202,28 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Add Reply", callback_data=f"mgr:add:{chat_id}"),
-                InlineKeyboardButton("View Replies", callback_data=f"mgr:list:{chat_id}"),
+                InlineKeyboardButton(
+                    "Add Reply", callback_data=f"mgr:add:{chat_id}", style=ButtonStyle.SUCCESS
+                ),
+                InlineKeyboardButton(
+                    "View Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
+                ),
             ],
             [
-                InlineKeyboardButton(enabled_label, callback_data=f"mgr:toggle:{chat_id}"),
-                InlineKeyboardButton(reactions_label, callback_data=f"mgr:reactions:{chat_id}"),
+                InlineKeyboardButton(
+                    enabled_label,
+                    callback_data=f"mgr:toggle:{chat_id}",
+                    style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
+                ),
+                InlineKeyboardButton(
+                    reactions_label,
+                    callback_data=f"mgr:reactions:{chat_id}",
+                    style=(
+                        ButtonStyle.DANGER
+                        if document.get("reactions_enabled", True)
+                        else ButtonStyle.SUCCESS
+                    ),
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -170,7 +238,34 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 ),
             ],
             [
-                InlineKeyboardButton("Clear Local Replies", callback_data=f"mgr:clear:{chat_id}"),
+                InlineKeyboardButton(
+                    f"Cooldown: {document.get('cooldown_seconds', 5)}s",
+                    callback_data=f"mgr:cooldown:{chat_id}",
+                ),
+                InlineKeyboardButton(
+                    f"Rate: {document.get('rate_limit_per_minute', 10) or 'Unlimited'}/min",
+                    callback_data=f"mgr:rate:{chat_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "Global Replies On"
+                    if document.get("global_replies_enabled", True)
+                    else "Global Replies Off",
+                    callback_data=f"mgr:globals:{chat_id}",
+                    style=(
+                        ButtonStyle.DANGER
+                        if document.get("global_replies_enabled", True)
+                        else ButtonStyle.SUCCESS
+                    ),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Clear Local Replies",
+                    callback_data=f"mgr:confirm-clear:{chat_id}",
+                    style=ButtonStyle.DANGER,
+                ),
                 InlineKeyboardButton("Refresh", callback_data=f"mgr:open:{chat_id}"),
             ],
         ]
@@ -181,10 +276,22 @@ def saved_reply_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Add Another Reply", callback_data=f"mgr:add:{chat_id}"),
-                InlineKeyboardButton("View Replies", callback_data=f"mgr:list:{chat_id}"),
+                InlineKeyboardButton(
+                    "Add Another Reply",
+                    callback_data=f"mgr:add:{chat_id}",
+                    style=ButtonStyle.SUCCESS,
+                ),
+                InlineKeyboardButton(
+                    "View Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
+                ),
             ],
-            [InlineKeyboardButton("Back to Manager", callback_data=f"mgr:open:{chat_id}")],
+            [
+                InlineKeyboardButton(
+                    "Back to Manager",
+                    callback_data=f"mgr:open:{chat_id}",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ],
         ]
     )
 
@@ -193,10 +300,20 @@ def global_manager_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Add Global Reply", callback_data="global:add"),
-                InlineKeyboardButton("View Global Replies", callback_data="global:list"),
+                InlineKeyboardButton(
+                    "Add Global Reply", callback_data="global:add", style=ButtonStyle.SUCCESS
+                ),
+                InlineKeyboardButton(
+                    "View Global Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+                ),
             ],
-            [InlineKeyboardButton("Clear Global Replies", callback_data="global:clear")],
+            [
+                InlineKeyboardButton(
+                    "Clear Global Replies",
+                    callback_data="global:confirm-clear",
+                    style=ButtonStyle.DANGER,
+                )
+            ],
         ]
     )
 
@@ -205,10 +322,18 @@ def global_saved_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Add Another", callback_data="global:add"),
-                InlineKeyboardButton("View Global Replies", callback_data="global:list"),
+                InlineKeyboardButton(
+                    "Add Another", callback_data="global:add", style=ButtonStyle.SUCCESS
+                ),
+                InlineKeyboardButton(
+                    "View Global Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+                ),
             ],
-            [InlineKeyboardButton("Back", callback_data="global:open")],
+            [
+                InlineKeyboardButton(
+                    "Back", callback_data="global:open", style=ButtonStyle.PRIMARY
+                )
+            ],
         ]
     )
 
@@ -234,6 +359,9 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
         f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
         f"Replies: {local_count} local + {global_count} global\n"
         f"Reply chance: {document.get('reply_chance', 100)}%\n"
+        f"Cooldown: {document.get('cooldown_seconds', 5)} seconds\n"
+        f"Rate limit: {document.get('rate_limit_per_minute', 10) or 'unlimited'}/minute\n"
+        f"Global replies: {'enabled' if document.get('global_replies_enabled', True) else 'disabled'}\n"
         f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
         f"Reaction chance: {document.get('reaction_chance', 25)}%"
     )
@@ -275,7 +403,15 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await open_manager(client, repository, message, chat_id)
             return
         links = await repository.get_links()
-        await message.reply_text(START_TEXT, reply_markup=link_keyboard(links))
+        keyboard = link_keyboard(links)
+        start_image = await repository.get_start_image()
+        if start_image:
+            try:
+                await message.reply_photo(start_image, caption=START_TEXT, reply_markup=keyboard)
+                return
+            except RPCError:
+                LOGGER.exception("Could not send configured start image")
+        await message.reply_text(START_TEXT, reply_markup=keyboard)
 
     @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
     async def private_manager_hint(_: Client, message: Message) -> None:
@@ -312,6 +448,29 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await repository.set_link(name, value)
             await message.reply_text(f"{labels[name]} button updated.")
 
+    @app.on_message(filters.private & filters.command("start_img"))
+    async def start_image_command(_: Client, message: Message) -> None:
+        if not message.from_user or message.from_user.id != settings.owner_id:
+            await message.reply_text("Only the bot owner can configure the start image.")
+            return
+        argument = command_argument(message).lower()
+        if argument == "off":
+            await repository.set_start_image(None)
+            await message.reply_text("Start-menu image removed.")
+            return
+        file_id = start_image_file_id(message)
+        if not file_id:
+            current = await repository.get_start_image()
+            status = "configured" if current else "not configured"
+            await message.reply_text(
+                f"Start-menu image is {status}.\n"
+                "Send a photo with /start_img as its caption, reply to a photo with /start_img, "
+                "or use /start_img off."
+            )
+            return
+        await repository.set_start_image(file_id)
+        await message.reply_text("Start-menu image updated.")
+
     group_commands = filters.group & filters.command(COMMANDS)
 
     @app.on_message(group_commands)
@@ -322,7 +481,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         launcher = await message.reply_text(
             "Configure this group privately.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("Open Auto Reply Manager", url=f"https://t.me/{me.username}?start=configure_{message.chat.id}")]]
+                [[
+                    InlineKeyboardButton(
+                        "Open Auto Reply Manager",
+                        url=f"https://t.me/{me.username}?start=configure_{message.chat.id}",
+                        style=ButtonStyle.PRIMARY,
+                    )
+                ]]
             ),
         )
         asyncio.create_task(delete_later(message, launcher))
@@ -364,8 +529,50 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             document = await repository.get(chat_id)
             chance = (document.get("reply_chance", 100) + 25) % 125
             await repository.set_reply_chance(chat_id, chance)
+        elif action == "cooldown":
+            document = await repository.get(chat_id)
+            await repository.set_cooldown(
+                chat_id, next_option(document.get("cooldown_seconds", 5), COOLDOWN_OPTIONS)
+            )
+        elif action == "rate":
+            document = await repository.get(chat_id)
+            await repository.set_rate_limit(
+                chat_id, next_option(document.get("rate_limit_per_minute", 10), RATE_LIMIT_OPTIONS)
+            )
+        elif action == "globals":
+            await repository.toggle_global_replies(chat_id)
+        elif action == "confirm-clear":
+            await query.message.reply_text(
+                "Clear all local replies for this group?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Yes, Clear",
+                                callback_data=f"mgr:clear:{chat_id}",
+                                style=ButtonStyle.DANGER,
+                            ),
+                            InlineKeyboardButton(
+                                "Cancel",
+                                callback_data=f"mgr:open:{chat_id}",
+                                style=ButtonStyle.PRIMARY,
+                            ),
+                        ]
+                    ]
+                ),
+            )
+            await query.answer()
+            return
         elif action == "clear":
             await repository.clear_responses(chat_id)
+        elif action.startswith("exclude-"):
+            try:
+                index = int(action.removeprefix("exclude-"))
+                response = (await repository.get_global_responses())[index - 1]
+            except (ValueError, IndexError):
+                await query.answer("Global reply not found.", show_alert=True)
+                return
+            await repository.toggle_global_exclusion(chat_id, response)
         elif action.startswith("delete-"):
             try:
                 index = int(action.removeprefix("delete-"))
@@ -373,33 +580,70 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 await query.answer("Invalid reply number.", show_alert=True)
                 return
             await repository.remove_response(chat_id, index)
-        elif action == "list":
+        elif action.startswith("list"):
+            try:
+                page = int(action.split("-", 1)[1]) if "-" in action else 0
+            except ValueError:
+                page = 0
             document = await repository.get(chat_id)
             local_responses = document["responses"]
             global_responses = await repository.get_global_responses()
-            local_labels = [
-                await display_response_label(client, response) for response in local_responses
-            ]
-            global_labels = [
-                await display_response_label(client, response) for response in global_responses
-            ]
-            sections = []
-            if local_labels:
-                sections.append(
-                    "Local replies:\n"
-                    + "\n".join(f"{index}. {label}" for index, label in enumerate(local_labels, 1))
+            combined = [("local", index, response) for index, response in enumerate(local_responses, 1)]
+            combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
+            page_count = max(1, (len(combined) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
+            page = max(0, min(page, page_count - 1))
+            page_items = combined[page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE]
+            excluded = document.get("excluded_global_responses", [])
+            lines = []
+            buttons = []
+            for source, index, response in page_items:
+                label = await display_response_label(client, response)
+                if source == "local":
+                    lines.append(f"L{index}. {label}")
+                    buttons.append(
+                        [
+                            InlineKeyboardButton(
+                                f"Delete L{index}",
+                                callback_data=f"mgr:delete-{index}:{chat_id}",
+                                style=ButtonStyle.DANGER,
+                            )
+                        ]
+                    )
+                else:
+                    is_excluded = response in excluded
+                    lines.append(f"G{index}. {label}{' (excluded)' if is_excluded else ''}")
+                    buttons.append(
+                        [
+                            InlineKeyboardButton(
+                                f"{'Include' if is_excluded else 'Exclude'} G{index}",
+                                callback_data=f"mgr:exclude-{index}:{chat_id}",
+                                style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
+                            )
+                        ]
+                    )
+            text = (
+                f"Replies page {page + 1}/{page_count}:\n" + "\n".join(lines)
+                if lines
+                else "No replies configured."
+            )
+            navigation = []
+            if page > 0:
+                navigation.append(
+                    InlineKeyboardButton("Previous", callback_data=f"mgr:list-{page - 1}:{chat_id}")
                 )
-            if global_labels:
-                sections.append(
-                    "Global replies (read-only):\n"
-                    + "\n".join(f"G{index}. {label}" for index, label in enumerate(global_labels, 1))
+            if page + 1 < page_count:
+                navigation.append(
+                    InlineKeyboardButton("Next", callback_data=f"mgr:list-{page + 1}:{chat_id}")
                 )
-            text = "\n\n".join(sections) if sections else "No replies configured."
-            buttons = [
-                [InlineKeyboardButton(f"Delete {index}", callback_data=f"mgr:delete-{index}:{chat_id}")]
-                for index in range(1, min(len(local_responses), 20) + 1)
-            ]
-            buttons.append([InlineKeyboardButton("Back", callback_data=f"mgr:open:{chat_id}")])
+            if navigation:
+                buttons.append(navigation)
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "Back", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY
+                    )
+                ]
+            )
             await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
             await query.answer()
             return
@@ -423,6 +667,26 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         if action == "clear":
             await repository.clear_global_responses()
+        elif action == "confirm-clear":
+            await query.message.reply_text(
+                "Clear all global replies?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Yes, Clear",
+                                callback_data="global:clear",
+                                style=ButtonStyle.DANGER,
+                            ),
+                            InlineKeyboardButton(
+                                "Cancel", callback_data="global:open", style=ButtonStyle.PRIMARY
+                            ),
+                        ]
+                    ]
+                ),
+            )
+            await query.answer()
+            return
         elif action.startswith("delete-"):
             try:
                 index = int(action.removeprefix("delete-"))
@@ -430,20 +694,55 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 await query.answer("Invalid reply number.", show_alert=True)
                 return
             await repository.remove_global_response(index)
-        elif action == "list":
+        elif action.startswith("list"):
+            try:
+                page = int(action.split("-", 1)[1]) if "-" in action else 0
+            except ValueError:
+                page = 0
             responses = await repository.get_global_responses()
-            labels = [await display_response_label(client, response) for response in responses]
+            page_count = max(1, (len(responses) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
+            page = max(0, min(page, page_count - 1))
+            page_items = list(enumerate(responses, 1))[
+                page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE
+            ]
+            labels = [
+                (index, await display_response_label(client, response))
+                for index, response in page_items
+            ]
             text = (
                 "No global default replies configured."
                 if not responses
-                else "Global default replies:\n"
-                + "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
+                else f"Global replies page {page + 1}/{page_count}:\n"
+                + "\n".join(f"{index}. {label}" for index, label in labels)
             )
             buttons = [
-                [InlineKeyboardButton(f"Delete {index}", callback_data=f"global:delete-{index}")]
-                for index in range(1, min(len(responses), 20) + 1)
+                [
+                    InlineKeyboardButton(
+                        f"Delete {index}",
+                        callback_data=f"global:delete-{index}",
+                        style=ButtonStyle.DANGER,
+                    )
+                ]
+                for index, _ in page_items
             ]
-            buttons.append([InlineKeyboardButton("Back", callback_data="global:open")])
+            navigation = []
+            if page > 0:
+                navigation.append(
+                    InlineKeyboardButton("Previous", callback_data=f"global:list-{page - 1}")
+                )
+            if page + 1 < page_count:
+                navigation.append(
+                    InlineKeyboardButton("Next", callback_data=f"global:list-{page + 1}")
+                )
+            if navigation:
+                buttons.append(navigation)
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "Back", callback_data="global:open", style=ButtonStyle.PRIMARY
+                    )
+                ]
+            )
             await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
             await query.answer()
             return
@@ -470,6 +769,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "autoreply",
                 "reaction",
                 "global_defaults",
+                "start_img",
             ]
         ),
         group=1,
@@ -540,17 +840,25 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(filters.create(eligible_message), group=1)
     async def handle_group_message(client: Client, message: Message) -> None:
-        reply_chance = await repository.reply_chance(message.chat.id)
+        group_settings = await repository.get(message.chat.id)
+        if not group_settings["enabled"] or not interaction_allowed(
+            message.chat.id,
+            group_settings.get("cooldown_seconds", 5),
+            group_settings.get("rate_limit_per_minute", 10),
+        ):
+            return
+        reply_chance = group_settings.get("reply_chance", 100)
         response = (
             await repository.next_response(message.chat.id)
-            if reply_chance is not None and chance_succeeds(reply_chance)
+            if chance_succeeds(reply_chance)
             else None
         )
         if response:
             try:
-                await send_response(client, message, response)
-            except FloodWait as exc:
-                LOGGER.warning("Reply flood wait for %s seconds in chat %s", exc.value, message.chat.id)
+                await retry_flood_wait(lambda: send_response(client, message, response))
+            except (Forbidden, ChatAdminRequired):
+                LOGGER.warning("Disabling inaccessible chat %s", message.chat.id)
+                await repository.set_enabled(message.chat.id, False)
             except RPCError:
                 LOGGER.exception("Could not reply in chat %s", message.chat.id)
             except (KeyError, TypeError, ValueError):
@@ -560,11 +868,10 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         reaction = choose_reaction(*reaction_settings) if reaction_settings else None
         if reaction:
             try:
-                await message.react(reaction)
-            except FloodWait as exc:
-                LOGGER.warning(
-                    "Reaction flood wait for %s seconds in chat %s", exc.value, message.chat.id
-                )
+                await retry_flood_wait(lambda: message.react(reaction))
+            except (Forbidden, ChatAdminRequired):
+                LOGGER.warning("Disabling inaccessible chat %s", message.chat.id)
+                await repository.set_enabled(message.chat.id, False)
             except RPCError:
                 LOGGER.exception("Could not react in chat %s", message.chat.id)
 
