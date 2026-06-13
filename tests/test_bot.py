@@ -192,7 +192,7 @@ def test_start_text_contains_setup_steps() -> None:
 async def test_broadcast_response_copies_to_every_known_group() -> None:
     class FakeRepository:
         async def group_ids(self):
-            return [-1001, -1002]
+            return list(range(21))
 
         async def set_enabled(self, chat_id, enabled):
             raise AssertionError("No group should be disabled")
@@ -205,14 +205,16 @@ async def test_broadcast_response_copies_to_every_known_group() -> None:
             self.calls.append(kwargs)
 
     client = FakeClient()
-    sent, failed = await broadcast_response(
-        client,
-        FakeRepository(),
-        {"chat_id": 123, "message_id": 42},
-    )
+    with patch("autoreply.bot.asyncio.sleep") as sleep:
+        sent, failed = await broadcast_response(
+            client,
+            FakeRepository(),
+            {"chat_id": 123, "message_id": 42},
+        )
 
-    assert (sent, failed) == (2, 0)
-    assert [call["chat_id"] for call in client.calls] == [-1001, -1002]
+    assert (sent, failed) == (21, 0)
+    assert [call["chat_id"] for call in client.calls] == list(range(21))
+    sleep.assert_awaited_once_with(3)
 
 
 def test_response_label_preserves_existing_text_responses() -> None:

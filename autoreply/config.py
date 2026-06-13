@@ -49,7 +49,6 @@ class Settings:
             storage_chat_id = int(os.environ["STORAGE_CHAT_ID"]) if os.getenv("STORAGE_CHAT_ID") else None
         except ValueError as exc:
             raise RuntimeError("TELEGRAM_API_ID, OWNER_ID, and STORAGE_CHAT_ID must be integers") from exc
-
         return cls(
             api_id=api_id,
             api_hash=required["TELEGRAM_API_HASH"],

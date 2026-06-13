@@ -74,6 +74,8 @@ SUDOER_HELP_TEXT = (
     "🔗 /updates, /support, /owner_link — menu links"
 )
 MANAGER_DELETE_DELAY = 30
+BROADCAST_BATCH_SIZE = 20
+BROADCAST_BATCH_DELAY_SECONDS = 3
 REPLIES_PER_PAGE = 10
 REPLY_LABEL_LIMIT = 42
 COOLDOWN_OPTIONS = [0, 5, 15, 30, 60]
@@ -363,7 +365,8 @@ async def broadcast_response(
 ) -> tuple[int, int]:
     sent = 0
     failed = 0
-    for chat_id in await repository.group_ids():
+    group_ids = await repository.group_ids()
+    for position, chat_id in enumerate(group_ids):
         try:
             await retry_flood_wait(
                 lambda chat_id=chat_id: client.copy_message(
@@ -379,6 +382,8 @@ async def broadcast_response(
         except RPCError:
             failed += 1
             LOGGER.exception("Could not broadcast to chat %s", chat_id)
+        if (position + 1) % BROADCAST_BATCH_SIZE == 0 and position + 1 < len(group_ids):
+            await asyncio.sleep(BROADCAST_BATCH_DELAY_SECONDS)
     return sent, failed
 
 
@@ -1028,7 +1033,10 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await query.answer("⚠️ Broadcast expired.", show_alert=True)
             return
         await query.answer("📣 Broadcasting…")
-        await query.message.edit_text("📣 Broadcasting…")
+        await query.message.edit_text(
+            f"📣 Broadcasting…\n\n⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per "
+            f"{BROADCAST_BATCH_SIZE} groups"
+        )
         sent, failed = await broadcast_response(client, repository, response)
         await repository.clear_capture_group(query.from_user.id)
         await query.message.edit_text(
@@ -1085,7 +1093,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await repository.set_pending_broadcast(message.from_user.id, response)
             group_count = len(await repository.group_ids())
             await message.reply_text(
-                f"📣 Send this message to {group_count} known groups?",
+                f"📣 Send this message to {group_count} known groups?\n\n"
+                f"⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per {BROADCAST_BATCH_SIZE} groups",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [

@@ -82,7 +82,8 @@ global replies turned on, including groups without a saved local reply.
 
 Owner and sudoers can use `/broadcast` in private chat, send any Telegram
 message, then confirm delivery to every known group. Broadcasts retry flood
-waits and report sent/failed totals.
+waits and report sent/failed totals. Delivery pauses for 3 seconds after every
+batch of 20 groups.
 
 ## Private configuration
 
