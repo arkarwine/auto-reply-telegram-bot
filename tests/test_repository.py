@@ -9,6 +9,7 @@ from autoreply.repository import GroupRepository
 class FakeCollection:
     def __init__(self, document):
         self.document = deepcopy(document)
+        self.update_many_calls = []
 
     async def find_one_and_update(self, query, update, return_document):
         if (
@@ -41,6 +42,10 @@ class FakeCollection:
                 self.document.setdefault(key, value)
         return type("Result", (), {"modified_count": 1})()
 
+    async def update_many(self, query, update):
+        self.update_many_calls.append((query, update))
+        return type("Result", (), {"modified_count": 0})()
+
 
 class FakeSettingsCollection:
     def __init__(self, responses=None):
@@ -61,6 +66,11 @@ class FakeSettingsCollection:
 
     async def find_one(self, query):
         return deepcopy(self.document)
+
+    async def update_one(self, query, update, upsert=False):
+        if "$push" in update:
+            self.document["responses"].append(update["$push"]["responses"])
+        return type("Result", (), {"modified_count": 1})()
 
 
 def repository_with(document, global_responses=None) -> GroupRepository:
@@ -125,6 +135,28 @@ async def test_next_response_uses_global_replies_when_group_has_none() -> None:
     with patch("autoreply.repository.random.choice", return_value="global two") as choice:
         assert await repository.next_response(123) == "global two"
     choice.assert_called_once_with(["global one", "global two"])
+
+
+@pytest.mark.asyncio
+async def test_next_response_uses_global_replies_before_group_document_exists() -> None:
+    repository = repository_with(None, global_responses=["global"])
+
+    assert await repository.next_response(123) == "global"
+
+
+@pytest.mark.asyncio
+async def test_adding_global_reply_clears_stale_group_exclusions() -> None:
+    response = {"kind": "message", "message_id": 42}
+    repository = repository_with(None)
+
+    assert await repository.add_global_response(response) == "added"
+    assert await repository.get_global_responses() == [response]
+    assert repository.collection.update_many_calls == [
+        (
+            {"excluded_global_responses": response},
+            {"$pull": {"excluded_global_responses": response}},
+        )
+    ]
 
 
 @pytest.mark.asyncio

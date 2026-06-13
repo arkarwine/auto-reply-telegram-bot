@@ -37,39 +37,31 @@ COMMANDS = [
     "reaction",
 ]
 BOT_MENU_COMMANDS = [
-    BotCommand("start", "Open the bot guide"),
-    BotCommand("help", "Show setup and usage help"),
-    BotCommand("autoreply", "Open the private group manager"),
-    BotCommand("updates", "Owner: configure updates button"),
-    BotCommand("support", "Owner: configure support button"),
-    BotCommand("owner_link", "Owner: configure owner button"),
-    BotCommand("global_defaults", "Owner: manage global default replies"),
-    BotCommand("start_img", "Owner: configure start-menu image"),
+    BotCommand("start", "🚀 Open the bot"),
+    BotCommand("help", "❓ Quick help"),
+    BotCommand("autoreply", "⚙️ Manage a group"),
+    BotCommand("updates", "📢 Set updates link"),
+    BotCommand("support", "💬 Set support link"),
+    BotCommand("owner_link", "👤 Set owner link"),
+    BotCommand("global_defaults", "🌐 Manage global replies"),
+    BotCommand("start_img", "🖼 Set start image"),
 ]
 START_TEXT = (
-    "Telegram Group Interaction Bot\n\n"
-    "I can keep group chats active with random automatic replies and occasional random reactions.\n\n"
-    "Quick setup:\n"
-    "1. Add me to your group as an administrator.\n"
-    "2. Disable privacy mode through BotFather so I can see group messages.\n"
-    "3. Send /autoreply in the group.\n"
-    "4. Open the private manager to add replies and tune interactions.\n\n"
-    "All configuration happens privately, keeping the group clean."
+    "✨ Auto Reply\n\n"
+    "Keep your groups lively with random replies and reactions.\n\n"
+    "🚀 Add me as an admin\n"
+    "🔓 Disable privacy mode in BotFather\n"
+    "⚙️ Send /autoreply in your group"
 )
 HELP_TEXT = (
-    "Auto Reply Help\n\n"
-    "Group setup:\n"
-    "- Add me to a group as an administrator.\n"
-    "- In BotFather, disable privacy mode so I can see normal group messages.\n"
-    "- Send /autoreply in the group and open the private manager.\n\n"
-    "Manager controls:\n"
-    "- Add any copyable Telegram message as a reply.\n"
-    "- Set reply chance, reaction chance, cooldown, and per-minute rate limit.\n"
-    "- Include or exclude global default replies per group.\n\n"
-    "Owner controls:\n"
-    "- /global_defaults manages global default replies.\n"
-    "- /updates, /support, and /owner_link configure start-menu buttons.\n"
-    "- /start_img configures the start-menu image."
+    "❓ Quick Help\n\n"
+    "1️⃣ Add me as a group admin\n"
+    "2️⃣ Disable privacy mode in BotFather\n"
+    "3️⃣ Send /autoreply in the group\n"
+    "4️⃣ Add replies in the private manager\n\n"
+    "🌐 /global_defaults — global replies\n"
+    "🖼 /start_img — start image\n"
+    "🔗 /updates, /support, /owner_link — menu links"
 )
 MANAGER_DELETE_DELAY = 30
 REPLIES_PER_PAGE = 5
@@ -129,20 +121,18 @@ async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2)
 
 
 def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
-    buttons = [
-        InlineKeyboardButton("Help", callback_data="start:help", style=ButtonStyle.PRIMARY)
-    ]
+    buttons = [InlineKeyboardButton("❓ Help", callback_data="start:help", style=ButtonStyle.PRIMARY)]
     if links.get("updates"):
         buttons.append(
-            InlineKeyboardButton("Updates Channel", url=links["updates"], style=ButtonStyle.PRIMARY)
+            InlineKeyboardButton("📢 Updates", url=links["updates"], style=ButtonStyle.PRIMARY)
         )
     if links.get("support"):
         buttons.append(
-            InlineKeyboardButton("Support Group", url=links["support"], style=ButtonStyle.SUCCESS)
+            InlineKeyboardButton("💬 Support", url=links["support"], style=ButtonStyle.SUCCESS)
         )
     if links.get("owner_link"):
-        buttons.append(InlineKeyboardButton("Owner", url=links["owner_link"]))
-    return InlineKeyboardMarkup([[button] for button in buttons]) if buttons else None
+        buttons.append(InlineKeyboardButton("👤 Owner", url=links["owner_link"]))
+    return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
 
 
 def valid_link(value: str) -> bool:
@@ -240,16 +230,16 @@ async def delete_later(*messages: Message) -> None:
 
 
 def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
-    enabled_label = "Disable" if document["enabled"] else "Enable"
-    reactions_label = "Reactions Off" if document.get("reactions_enabled", True) else "Reactions On"
+    enabled_label = "⏸ Disable" if document["enabled"] else "▶️ Enable"
+    reactions_label = "🎭 Reactions: On" if document.get("reactions_enabled", True) else "🎭 Reactions: Off"
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    "Add Reply", callback_data=f"mgr:add:{chat_id}", style=ButtonStyle.SUCCESS
+                    "➕ Add Reply", callback_data=f"mgr:add:{chat_id}", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
-                    "View Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
+                    "📚 Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
                 ),
             ],
             [
@@ -270,31 +260,29 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    f"Reply Chance: {document.get('reply_chance', 100)}%",
+                    f"💬 Reply: {document.get('reply_chance', 100)}%",
                     callback_data=f"mgr:reply-chance:{chat_id}",
                 ),
-            ],
-            [
                 InlineKeyboardButton(
-                    f"Reaction Chance: {document.get('reaction_chance', 25)}%",
+                    f"🎲 React: {document.get('reaction_chance', 25)}%",
                     callback_data=f"mgr:chance:{chat_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
+                    f"⏱ {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
                     callback_data=f"mgr:cooldown:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    f"Rate: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or 'Unlimited'}/min",
+                    f"🚦 {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
                     callback_data=f"mgr:rate:{chat_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    "Global Replies On"
+                    "🌐 Globals: On"
                     if document.get("global_replies_enabled", True)
-                    else "Global Replies Off",
+                    else "🌐 Globals: Off",
                     callback_data=f"mgr:globals:{chat_id}",
                     style=(
                         ButtonStyle.DANGER
@@ -305,11 +293,11 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "Clear Local Replies",
+                    "🗑 Clear Replies",
                     callback_data=f"mgr:confirm-clear:{chat_id}",
                     style=ButtonStyle.DANGER,
                 ),
-                InlineKeyboardButton("Refresh", callback_data=f"mgr:open:{chat_id}"),
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}"),
             ],
         ]
     )
@@ -320,17 +308,17 @@ def saved_reply_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "Add Another Reply",
+                    "➕ Add Another",
                     callback_data=f"mgr:add:{chat_id}",
                     style=ButtonStyle.SUCCESS,
                 ),
                 InlineKeyboardButton(
-                    "View Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
+                    "📚 Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    "Back to Manager",
+                    "⬅️ Manager",
                     callback_data=f"mgr:open:{chat_id}",
                     style=ButtonStyle.PRIMARY,
                 )
@@ -344,15 +332,15 @@ def global_manager_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "Add Global Reply", callback_data="global:add", style=ButtonStyle.SUCCESS
+                    "➕ Add Global", callback_data="global:add", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
-                    "View Global Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+                    "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    "Clear Global Replies",
+                    "🗑 Clear Globals",
                     callback_data="global:confirm-clear",
                     style=ButtonStyle.DANGER,
                 )
@@ -366,15 +354,15 @@ def global_saved_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "Add Another", callback_data="global:add", style=ButtonStyle.SUCCESS
+                    "➕ Add Another", callback_data="global:add", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
-                    "View Global Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+                    "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    "Back", callback_data="global:open", style=ButtonStyle.PRIMARY
+                    "⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY
                 )
             ],
         ]
@@ -384,9 +372,9 @@ def global_saved_keyboard() -> InlineKeyboardMarkup:
 async def global_manager_content(repository: GroupRepository) -> tuple[str, InlineKeyboardMarkup]:
     responses = await repository.get_global_responses()
     return (
-        "Global Default Replies\n\n"
-        f"Replies: {len(responses)}\n\n"
-        "Included in the reply rotation of every enabled group.",
+        "🌐 Global Replies\n\n"
+        f"📚 Saved: {len(responses)}\n"
+        "Used by groups with globals enabled.",
         global_manager_keyboard(),
     )
 
@@ -396,24 +384,21 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
     document = await repository.get(chat_id)
     local_count = len(document["responses"])
     global_count = len(await repository.get_global_responses())
+    rate = document.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE) or "∞"
     text = (
-        "Auto Reply Manager\n\n"
-        f"Group: {chat.title or chat_id}\n"
-        f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
-        f"Replies: {local_count} local + {global_count} global\n"
-        f"Reply chance: {document.get('reply_chance', 100)}%\n"
-        f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)} seconds\n"
-        f"Rate limit: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or 'unlimited'}/minute\n"
-        f"Global replies: {'enabled' if document.get('global_replies_enabled', True) else 'disabled'}\n"
-        f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
-        f"Reaction chance: {document.get('reaction_chance', 25)}%"
+        f"⚙️ {chat.title or chat_id}\n\n"
+        f"{'🟢 Active' if document['enabled'] else '🔴 Paused'}  •  "
+        f"📚 {local_count} local + {global_count} global\n"
+        f"💬 {document.get('reply_chance', 100)}%  •  "
+        f"🎲 {document.get('reaction_chance', 25)}%  •  "
+        f"⏱ {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s  •  🚦 {rate}/min"
     )
     return text, manager_keyboard(chat_id, document)
 
 
 async def open_manager(client: Client, repository: GroupRepository, message: Message, chat_id: int) -> None:
     if not message.from_user or not await user_is_group_admin(client, chat_id, message.from_user.id):
-        await message.reply_text("You are not an administrator of that group.")
+        await message.reply_text("⛔ Group admins only.")
         return
     text, keyboard = await manager_content(client, repository, chat_id)
     await message.reply_text(text, reply_markup=keyboard)
@@ -425,11 +410,11 @@ async def require_admin(client: Client, message: Message) -> bool:
     except RPCError as exc:
         LOGGER.warning("Could not verify admin in chat %s: %s", message.chat.id, exc)
         await message.reply_text(
-            "I could not verify group administrators. Make me a group administrator, then try again."
+            "⚠️ Promote me to admin, then try again."
         )
         return False
     if not allowed:
-        await message.reply_text("Only group administrators can manage auto-replies.")
+        await message.reply_text("⛔ Group admins only.")
     return allowed
 
 
@@ -448,20 +433,10 @@ async def group_onboarding_content(
         LOGGER.warning("Could not inspect bot permissions in chat %s: %s", message.chat.id, exc)
         is_admin = False
 
-    admin_line = (
-        "Admin access: OK"
-        if is_admin
-        else "Admin access: missing. Promote me to administrator so I can reply reliably."
-    )
-    text = (
-        "Thanks for adding me.\n\n"
-        "Requirement check:\n"
-        f"- {admin_line}\n"
-        "- Send messages: OK, because this notice was delivered.\n"
-        "- Privacy mode: please confirm it is disabled in BotFather so I can see normal group messages.\n\n"
-        "Auto-reply is enabled by default. Add at least one local reply, or configure global defaults, "
-        "and I will start responding according to this group's chance, cooldown, and rate-limit settings."
-    )
+    actions = ["🔓 Disable privacy mode in BotFather", "⚙️ Add replies in the manager"]
+    if not is_admin:
+        actions.insert(0, "🛡 Promote me to group admin")
+    text = "✨ Set Up Auto Reply\n\n" + "\n".join(actions)
     if not me.username:
         return text, None
     return (
@@ -470,14 +445,14 @@ async def group_onboarding_content(
             [
                 [
                     InlineKeyboardButton(
-                        "Open Auto Reply Manager",
+                        "⚙️ Open Manager",
                         url=f"https://t.me/{me.username}?start=configure_{message.chat.id}",
                         style=ButtonStyle.PRIMARY,
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        "Help",
+                        "❓ Help",
                         callback_data="start:help",
                         style=ButtonStyle.PRIMARY,
                     )
@@ -495,7 +470,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             try:
                 chat_id = int(argument.removeprefix("configure_"))
             except ValueError:
-                await message.reply_text("Invalid group configuration link.")
+                await message.reply_text("⚠️ Invalid group link.")
                 return
             await open_manager(client, repository, message, chat_id)
             return
@@ -522,14 +497,12 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
     async def private_manager_hint(_: Client, message: Message) -> None:
-        await message.reply_text(
-            "Send /autoreply in the group you want to configure, then open the private manager button."
-        )
+        await message.reply_text("⚙️ Send /autoreply in your group.")
 
     @app.on_message(filters.private & filters.command("global_defaults"))
     async def global_defaults_command(_: Client, message: Message) -> None:
         if not is_sudoer(settings, message):
-            await message.reply_text("Only the bot owner or sudoers can manage global default replies.")
+            await message.reply_text("⛔ Sudoers only.")
             return
         text, keyboard = await global_manager_content(repository)
         await message.reply_text(text, reply_markup=keyboard)
@@ -537,7 +510,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
         if not is_sudoer(settings, message):
-            await message.reply_text("Only the bot owner or sudoers can configure start-menu links.")
+            await message.reply_text("⛔ Sudoers only.")
             return
 
         name = message.command[0].lower()
@@ -545,38 +518,37 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         labels = {"updates": "Updates channel", "support": "Support group", "owner_link": "Owner"}
         if not value:
             current = (await repository.get_links()).get(name, "not configured")
-            await message.reply_text(f"{labels[name]}: {current}\nUsage: /{name} <url> or /{name} off")
+            await message.reply_text(f"🔗 {labels[name]}: {current}\n/{name} <url> or /{name} off")
         elif value.lower() == "off":
             await repository.set_link(name, None)
-            await message.reply_text(f"{labels[name]} button removed.")
+            await message.reply_text(f"✅ {labels[name]} removed.")
         elif not valid_link(value):
-            await message.reply_text("Link must start with https://, http://, or tg://")
+            await message.reply_text("⚠️ Use an https://, http://, or tg:// link.")
         else:
             await repository.set_link(name, value)
-            await message.reply_text(f"{labels[name]} button updated.")
+            await message.reply_text(f"✅ {labels[name]} updated.")
 
     @app.on_message(filters.private & filters.command("start_img"))
     async def start_image_command(_: Client, message: Message) -> None:
         if not is_sudoer(settings, message):
-            await message.reply_text("Only the bot owner or sudoers can configure the start image.")
+            await message.reply_text("⛔ Sudoers only.")
             return
         argument = command_argument(message).lower()
         if argument == "off":
             await repository.set_start_image(None)
-            await message.reply_text("Start-menu image removed.")
+            await message.reply_text("✅ Start image removed.")
             return
         file_id = start_image_file_id(message)
         if not file_id:
             current = await repository.get_start_image()
             status = "configured" if current else "not configured"
             await message.reply_text(
-                f"Start-menu image is {status}.\n"
-                "Send a photo with /start_img as its caption, reply to a photo with /start_img, "
-                "or use /start_img off."
+                f"🖼 Start image: {status}\n"
+                "Send/reply to a photo with /start_img, or use /start_img off."
             )
             return
         await repository.set_start_image(file_id)
-        await message.reply_text("Start-menu image updated.")
+        await message.reply_text("✅ Start image updated.")
 
     group_commands = filters.group & filters.command(COMMANDS)
 
@@ -597,11 +569,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         me = await client.get_me()
         launcher = await message.reply_text(
-            "Configure this group privately.",
+            "⚙️ Manage this group privately.",
             reply_markup=InlineKeyboardMarkup(
                 [[
                     InlineKeyboardButton(
-                        "Open Auto Reply Manager",
+                        "⚙️ Open Manager",
                         url=f"https://t.me/{me.username}?start=configure_{message.chat.id}",
                         style=ButtonStyle.PRIMARY,
                     )
@@ -618,18 +590,18 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             _, action, raw_chat_id = query.data.split(":", 2)
             chat_id = int(raw_chat_id)
         except (AttributeError, ValueError):
-            await query.answer("Invalid manager action.", show_alert=True)
+            await query.answer("⚠️ Invalid action.", show_alert=True)
             return
         if not await user_is_group_admin(client, chat_id, query.from_user.id):
-            await query.answer("You are no longer an administrator of this group.", show_alert=True)
+            await query.answer("⛔ Group admins only.", show_alert=True)
             return
 
         if action == "add":
             await repository.set_capture_group(query.from_user.id, chat_id)
             await query.message.reply_text(
-                "Send any message now. Text, photos, videos, stickers, documents, voice notes, polls, and other copyable messages are supported.\n\nSend /cancel to stop."
+                "➕ Send the reply to save.\n\n/cancel to stop."
             )
-            await query.answer("Waiting for a reply message.")
+            await query.answer("📥 Waiting for reply…")
             return
         if action == "toggle":
             document = await repository.get(chat_id)
@@ -669,17 +641,17 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await repository.toggle_global_replies(chat_id)
         elif action == "confirm-clear":
             await query.message.reply_text(
-                "Clear all local replies for this group?",
+                "🗑 Clear every local reply?",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "Yes, Clear",
+                                "🗑 Clear",
                                 callback_data=f"mgr:clear:{chat_id}",
                                 style=ButtonStyle.DANGER,
                             ),
                             InlineKeyboardButton(
-                                "Cancel",
+                                "✖️ Cancel",
                                 callback_data=f"mgr:open:{chat_id}",
                                 style=ButtonStyle.PRIMARY,
                             ),
@@ -696,14 +668,14 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 index = int(action.removeprefix("exclude-"))
                 response = (await repository.get_global_responses())[index - 1]
             except (ValueError, IndexError):
-                await query.answer("Global reply not found.", show_alert=True)
+                await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
             await repository.toggle_global_exclusion(chat_id, response)
         elif action.startswith("delete-"):
             try:
                 index = int(action.removeprefix("delete-"))
             except ValueError:
-                await query.answer("Invalid reply number.", show_alert=True)
+                await query.answer("⚠️ Invalid reply.", show_alert=True)
                 return
             await repository.remove_response(chat_id, index)
         elif action.startswith("list"):
@@ -729,7 +701,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                     buttons.append(
                         [
                             InlineKeyboardButton(
-                                f"Delete L{index}",
+                                f"🗑 L{index}",
                                 callback_data=f"mgr:delete-{index}:{chat_id}",
                                 style=ButtonStyle.DANGER,
                             )
@@ -741,32 +713,32 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                     buttons.append(
                         [
                             InlineKeyboardButton(
-                                f"{'Include' if is_excluded else 'Exclude'} G{index}",
+                                f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
                                 callback_data=f"mgr:exclude-{index}:{chat_id}",
                                 style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
                             )
                         ]
                     )
             text = (
-                f"Replies page {page + 1}/{page_count}:\n" + "\n".join(lines)
+                f"📚 Replies • {page + 1}/{page_count}\n\n" + "\n".join(lines)
                 if lines
-                else "No replies configured."
+                else "📭 No replies yet."
             )
             navigation = []
             if page > 0:
                 navigation.append(
-                    InlineKeyboardButton("Previous", callback_data=f"mgr:list-{page - 1}:{chat_id}")
+                    InlineKeyboardButton("⬅️ Prev", callback_data=f"mgr:list-{page - 1}:{chat_id}")
                 )
             if page + 1 < page_count:
                 navigation.append(
-                    InlineKeyboardButton("Next", callback_data=f"mgr:list-{page + 1}:{chat_id}")
+                    InlineKeyboardButton("Next ➡️", callback_data=f"mgr:list-{page + 1}:{chat_id}")
                 )
             if navigation:
                 buttons.append(navigation)
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        "Back", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY
+                        "⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY
                     )
                 ]
             )
@@ -776,36 +748,36 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
         text, keyboard = await manager_content(client, repository, chat_id)
         await query.message.edit_text(text, reply_markup=keyboard)
-        await query.answer("Updated.")
+        await query.answer("✅ Updated")
 
     @app.on_callback_query(filters.regex(r"^global:"))
     async def global_callback(client: Client, query: CallbackQuery) -> None:
         if not query.message or not query_is_sudoer(settings, query):
-            await query.answer("Only the bot owner or sudoers can manage global replies.", show_alert=True)
+            await query.answer("⛔ Sudoers only.", show_alert=True)
             return
         action = query.data.split(":", 1)[1]
         if action == "add":
             await repository.set_global_capture(query.from_user.id)
             await query.message.reply_text(
-                "Send any message now to save it as a global default reply.\n\nSend /cancel to stop."
+                "🌐 Send the global reply to save.\n\n/cancel to stop."
             )
-            await query.answer("Waiting for a global reply.")
+            await query.answer("📥 Waiting for reply…")
             return
         if action == "clear":
             await repository.clear_global_responses()
         elif action == "confirm-clear":
             await query.message.reply_text(
-                "Clear all global replies?",
+                "🗑 Clear every global reply?",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "Yes, Clear",
+                                "🗑 Clear",
                                 callback_data="global:clear",
                                 style=ButtonStyle.DANGER,
                             ),
                             InlineKeyboardButton(
-                                "Cancel", callback_data="global:open", style=ButtonStyle.PRIMARY
+                                "✖️ Cancel", callback_data="global:open", style=ButtonStyle.PRIMARY
                             ),
                         ]
                     ]
@@ -817,7 +789,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             try:
                 index = int(action.removeprefix("delete-"))
             except ValueError:
-                await query.answer("Invalid reply number.", show_alert=True)
+                await query.answer("⚠️ Invalid reply.", show_alert=True)
                 return
             await repository.remove_global_response(index)
         elif action.startswith("list"):
@@ -836,15 +808,15 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 for index, response in page_items
             ]
             text = (
-                "No global default replies configured."
+                "📭 No global replies yet."
                 if not responses
-                else f"Global replies page {page + 1}/{page_count}:\n"
+                else f"🌐 Global Replies • {page + 1}/{page_count}\n\n"
                 + "\n".join(f"{index}. {label}" for index, label in labels)
             )
             buttons = [
                 [
                     InlineKeyboardButton(
-                        f"Delete {index}",
+                        f"🗑 {index}",
                         callback_data=f"global:delete-{index}",
                         style=ButtonStyle.DANGER,
                     )
@@ -854,18 +826,18 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             navigation = []
             if page > 0:
                 navigation.append(
-                    InlineKeyboardButton("Previous", callback_data=f"global:list-{page - 1}")
+                    InlineKeyboardButton("⬅️ Prev", callback_data=f"global:list-{page - 1}")
                 )
             if page + 1 < page_count:
                 navigation.append(
-                    InlineKeyboardButton("Next", callback_data=f"global:list-{page + 1}")
+                    InlineKeyboardButton("Next ➡️", callback_data=f"global:list-{page + 1}")
                 )
             if navigation:
                 buttons.append(navigation)
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        "Back", callback_data="global:open", style=ButtonStyle.PRIMARY
+                        "⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY
                     )
                 ]
             )
@@ -874,13 +846,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         text, keyboard = await global_manager_content(repository)
         await query.message.edit_text(text, reply_markup=keyboard)
-        await query.answer("Updated.")
+        await query.answer("✅ Updated")
 
     @app.on_message(filters.private & filters.command("cancel"))
     async def cancel_capture(_: Client, message: Message) -> None:
         if message.from_user:
             await repository.clear_capture_group(message.from_user.id)
-        await message.reply_text("Reply capture cancelled.")
+        await message.reply_text("✖️ Cancelled.")
 
     @app.on_message(
         filters.private
@@ -912,7 +884,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
             await repository.clear_capture_group(message.from_user.id)
-            await message.reply_text("You are no longer an administrator of that group.")
+            await message.reply_text("⛔ Group admins only.")
             return
         source = message
         if settings.storage_chat_id:
@@ -921,7 +893,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             except RPCError:
                 LOGGER.exception("Could not copy captured reply to storage chat")
                 await message.reply_text(
-                    "I could not save that message to the storage chat. Check STORAGE_CHAT_ID and my permissions."
+                    "⚠️ Could not save it. Check STORAGE_CHAT_ID and my permissions."
                 )
                 return
         response = {
@@ -938,12 +910,12 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         )
         await repository.clear_capture_group(message.from_user.id)
         replies = {
-            "added": "Reply saved.",
-            "duplicate": "That reply is already configured.",
-            "full": f"This group already has the maximum of {MAX_RESPONSES} replies.",
+            "added": "✅ Reply saved.",
+            "duplicate": "⚠️ Already saved.",
+            "full": f"⚠️ Reply limit reached ({MAX_RESPONSES}).",
         }
         if global_capture:
-            replies["added"] = "Global default reply saved."
+            replies["added"] = "✅ Global reply saved and live."
         await message.reply_text(
             replies[result],
             reply_markup=(

@@ -120,10 +120,8 @@ class GroupRepository:
 
     async def next_response(self, chat_id: int) -> Any | None:
         global_responses = await self.get_global_responses()
-        document = await self.collection.find_one(
-            {"_id": chat_id, "enabled": True},
-        )
-        if not document:
+        document = await self.get(chat_id)
+        if not document["enabled"]:
             return None
 
         if not document.get("global_replies_enabled", True):
@@ -214,6 +212,10 @@ class GroupRepository:
             {"_id": "global_responses"},
             {"$push": {"responses": response}},
             upsert=True,
+        )
+        await self.collection.update_many(
+            {"excluded_global_responses": response},
+            {"$pull": {"excluded_global_responses": response}},
         )
         return "added"
 

@@ -77,6 +77,9 @@ Every enabled group rotates through its local replies and the global replies
 together. Group administrators can see global replies in **View Replies**, but
 cannot delete or change them.
 
+New global replies become available immediately in every enabled group with
+global replies turned on, including groups without a saved local reply.
+
 ## Private configuration
 
 A group administrator sends `/autoreply` in the group. The bot replies with an

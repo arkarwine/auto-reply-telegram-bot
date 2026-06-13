@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from pyrogram.enums import ButtonStyle, ParseMode
+from pyrogram.enums import ButtonStyle, ChatMemberStatus, ParseMode
 from pyrogram.errors import FloodWait
 
 from autoreply.bot import (
@@ -14,6 +14,7 @@ from autoreply.bot import (
     command_argument,
     display_response_label,
     global_manager_keyboard,
+    group_onboarding_content,
     interaction_allowed,
     is_sudoer,
     link_keyboard,
@@ -139,7 +140,7 @@ def test_disabled_parse_mode_preserves_angle_brackets() -> None:
 
 def test_start_text_contains_setup_steps() -> None:
     assert "/autoreply" in START_TEXT
-    assert "private manager" in START_TEXT
+    assert "✨ Auto Reply" in START_TEXT
     assert "/global_defaults" in HELP_TEXT
 
 
@@ -217,13 +218,16 @@ def test_link_keyboard_uses_configured_links() -> None:
         "https://t.me/support",
         "https://t.me/owner",
     ]
-    assert keyboard.inline_keyboard[0][0].text == "Help"
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["❓ Help", "📢 Updates"],
+        ["💬 Support", "👤 Owner"],
+    ]
 
 
 def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:
     keyboard = link_keyboard({})
     assert keyboard is not None
-    assert [row[0].text for row in keyboard.inline_keyboard] == ["Help"]
+    assert [row[0].text for row in keyboard.inline_keyboard] == ["❓ Help"]
 
 
 def test_link_validation() -> None:
@@ -247,32 +251,55 @@ def test_manager_keyboard_contains_private_controls() -> None:
     )
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert "Add Reply" in labels
-    assert "View Replies" in labels
-    assert "Enable" in labels
-    assert "Reply Chance: 75%" in labels
-    assert "Reaction Chance: 25%" in labels
-    assert "Cooldown: 0s" in labels
-    assert "Rate: Unlimited/min" in labels
-    assert "Global Replies On" in labels
+    assert "➕ Add Reply" in labels
+    assert "📚 Replies" in labels
+    assert "▶️ Enable" in labels
+    assert "💬 Reply: 75%" in labels
+    assert "🎲 React: 25%" in labels
+    assert "⏱ 0s" in labels
+    assert "🚦 ∞/min" in labels
+    assert "🌐 Globals: On" in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
-    assert styles["Add Reply"] == ButtonStyle.SUCCESS
-    assert styles["Enable"] == ButtonStyle.SUCCESS
-    assert styles["Clear Local Replies"] == ButtonStyle.DANGER
+    assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
+    assert styles["▶️ Enable"] == ButtonStyle.SUCCESS
+    assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:
     keyboard = saved_reply_keyboard(-100123)
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert labels == ["Add Another Reply", "View Replies", "Back to Manager"]
+    assert labels == ["➕ Add Another", "📚 Replies", "⬅️ Manager"]
 
 
 def test_global_manager_keyboard_contains_owner_controls() -> None:
     keyboard = global_manager_keyboard()
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert labels == ["Add Global Reply", "View Global Replies", "Clear Global Replies"]
+    assert labels == ["➕ Add Global", "🌐 Replies", "🗑 Clear Globals"]
+
+
+@pytest.mark.asyncio
+async def test_group_onboarding_mentions_only_unmet_requirements() -> None:
+    class FakeRepository:
+        async def set_enabled(self, chat_id, enabled):
+            assert (chat_id, enabled) == (-100123, True)
+
+    class FakeClient:
+        async def get_me(self):
+            return SimpleNamespace(id=1, username="bot")
+
+        async def get_chat_member(self, chat_id, user_id):
+            return SimpleNamespace(status=ChatMemberStatus.ADMINISTRATOR)
+
+    message = SimpleNamespace(chat=SimpleNamespace(id=-100123))
+    text, keyboard = await group_onboarding_content(FakeClient(), FakeRepository(), message)
+
+    assert "Promote me" not in text
+    assert "OK" not in text
+    assert "Disable privacy mode" in text
+    assert "Add replies" in text
+    assert keyboard.inline_keyboard[0][0].text == "⚙️ Open Manager"
 
 
 def test_start_image_file_id_accepts_attached_or_replied_photo() -> None:
