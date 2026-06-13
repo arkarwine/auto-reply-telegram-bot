@@ -184,7 +184,7 @@ def link_keyboard(
                 InlineKeyboardButton(
                     "🛡 Sudo Panel",
                     callback_data="start:sudo",
-                    style=ButtonStyle.PRIMARY,
+                    style=ButtonStyle.DANGER,
                 )
             ]
         )
@@ -200,9 +200,19 @@ def sudoer_panel_keyboard() -> InlineKeyboardMarkup:
                     callback_data="global:open",
                     style=ButtonStyle.PRIMARY,
                 ),
-                InlineKeyboardButton("📣 Broadcast Help", callback_data="start:broadcast-help"),
+                InlineKeyboardButton(
+                    "📣 Broadcast Help",
+                    callback_data="start:broadcast-help",
+                    style=ButtonStyle.PRIMARY,
+                ),
             ],
-            [InlineKeyboardButton("⬅️ Back", callback_data="start:back")],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Back",
+                    callback_data="start:back",
+                    style=ButtonStyle.DANGER,
+                )
+            ],
         ]
     )
 
@@ -344,13 +354,19 @@ async def reply_list_content(
     )
     navigation = []
     if page > 0:
-        navigation.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"mgr:list-{page - 1}:{chat_id}"))
+        navigation.append(
+            InlineKeyboardButton(
+                "⬅️ Prev",
+                callback_data=f"mgr:list-{page - 1}:{chat_id}",
+                style=ButtonStyle.DANGER,
+            )
+        )
     if page + 1 < page_count:
         navigation.append(InlineKeyboardButton("Next ➡️", callback_data=f"mgr:list-{page + 1}:{chat_id}"))
     if navigation:
         buttons.append(navigation)
     buttons.append(
-        [InlineKeyboardButton("⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY)]
+        [InlineKeyboardButton("⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.DANGER)]
     )
     return text[:4096], InlineKeyboardMarkup(buttons)
 
@@ -389,13 +405,19 @@ async def global_reply_list_content(
     ]
     navigation = []
     if page > 0:
-        navigation.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"global:list-{page - 1}"))
+        navigation.append(
+            InlineKeyboardButton(
+                "⬅️ Prev",
+                callback_data=f"global:list-{page - 1}",
+                style=ButtonStyle.DANGER,
+            )
+        )
     if page + 1 < page_count:
         navigation.append(InlineKeyboardButton("Next ➡️", callback_data=f"global:list-{page + 1}"))
     if navigation:
         buttons.append(navigation)
     buttons.append(
-        [InlineKeyboardButton("⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY)]
+        [InlineKeyboardButton("⬅️ Manager", callback_data="global:open", style=ButtonStyle.DANGER)]
     )
     return text[:4096], InlineKeyboardMarkup(buttons)
 
@@ -571,7 +593,7 @@ def saved_reply_keyboard(chat_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     "⬅️ Manager",
                     callback_data=f"mgr:open:{chat_id}",
-                    style=ButtonStyle.PRIMARY,
+                    style=ButtonStyle.DANGER,
                 )
             ],
         ]
@@ -613,7 +635,7 @@ def global_saved_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY
+                    "⬅️ Manager", callback_data="global:open", style=ButtonStyle.DANGER
                 )
             ],
         ]
@@ -774,7 +796,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "/broadcast <text>\n"
                 "Or reply to any message with /broadcast.",
                 InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("⬅️ Sudo Panel", callback_data="start:sudo")]]
+                    [[
+                        InlineKeyboardButton(
+                            "⬅️ Sudo Panel",
+                            callback_data="start:sudo",
+                            style=ButtonStyle.DANGER,
+                        )
+                    ]]
                 ),
             )
         else:
@@ -1000,7 +1028,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                         InlineKeyboardButton(
                             "⬅️ Replies",
                             callback_data=f"mgr:list-{page}:{chat_id}",
-                            style=ButtonStyle.PRIMARY,
+                            style=ButtonStyle.DANGER,
                         ),
                         InlineKeyboardButton(
                             "🗑 Delete" if source == "l" else "🚫 Exclude",
@@ -1103,7 +1131,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                         InlineKeyboardButton(
                             "⬅️ Replies",
                             callback_data=f"global:list-{page}",
-                            style=ButtonStyle.PRIMARY,
+                            style=ButtonStyle.DANGER,
                         ),
                         InlineKeyboardButton(
                             "🗑 Delete",

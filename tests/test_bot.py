@@ -410,12 +410,20 @@ def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
     assert "🛡 Sudo Panel" not in regular_labels
     assert "🛡 Sudo Panel" in sudoer_labels
     assert "/broadcast <text>" in SUDOER_PANEL_TEXT
+    sudoer_styles = {
+        button.text: button.style for row in sudoer.inline_keyboard for button in row
+    }
+    assert sudoer_styles["🛡 Sudo Panel"] == ButtonStyle.DANGER
 
 
 def test_sudoer_panel_has_privileged_shortcuts() -> None:
-    labels = [button.text for row in sudoer_panel_keyboard().inline_keyboard for button in row]
+    keyboard = sudoer_panel_keyboard()
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
 
     assert labels == ["🌐 Global Replies", "📣 Broadcast Help", "⬅️ Back"]
+    assert styles["📣 Broadcast Help"] == ButtonStyle.PRIMARY
+    assert styles["⬅️ Back"] == ButtonStyle.DANGER
 
 
 def test_link_validation() -> None:
@@ -458,6 +466,7 @@ def test_saved_reply_keyboard_contains_follow_up_actions() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == ["➕ Add Another", "📚 Replies", "⬅️ Manager"]
+    assert keyboard.inline_keyboard[-1][0].style == ButtonStyle.DANGER
 
 
 def test_global_manager_keyboard_contains_owner_controls() -> None:
