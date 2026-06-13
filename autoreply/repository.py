@@ -7,6 +7,7 @@ MAX_RESPONSES = 100
 MAX_REACTIONS = 20
 DEFAULT_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀"]
 DEFAULT_REACTION_CHANCE = 25
+DEFAULT_REPLY_CHANCE = 100
 
 
 class GroupRepository:
@@ -29,6 +30,7 @@ class GroupRepository:
             "enabled": False,
             "responses": [],
             "next_index": 0,
+            "reply_chance": DEFAULT_REPLY_CHANCE,
             "reactions_enabled": True,
             "reaction_chance": DEFAULT_REACTION_CHANCE,
             "reactions": list(DEFAULT_REACTIONS),
@@ -43,6 +45,7 @@ class GroupRepository:
                 "$setOnInsert": {
                     "responses": [],
                     "next_index": 0,
+                    "reply_chance": DEFAULT_REPLY_CHANCE,
                     "reactions_enabled": True,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
@@ -66,6 +69,7 @@ class GroupRepository:
                 "$setOnInsert": {
                     "enabled": False,
                     "next_index": 0,
+                    "reply_chance": DEFAULT_REPLY_CHANCE,
                     "reactions_enabled": True,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
@@ -100,34 +104,43 @@ class GroupRepository:
         return count
 
     async def next_response(self, chat_id: int) -> Any | None:
+        global_responses = await self.get_global_responses()
         document = await self.collection.find_one_and_update(
-            {
-                "_id": chat_id,
-                "enabled": True,
-                "responses.0": {"$exists": True},
-            },
-            [
-                {
-                    "$set": {
-                        "next_index": {
-                            "$mod": [
-                                {"$add": [{"$ifNull": ["$next_index", 0]}, 1]},
-                                {"$size": "$responses"},
-                            ]
-                        }
-                    }
-                }
-            ],
+            {"_id": chat_id, "enabled": True},
+            {"$inc": {"next_index": 1}},
             return_document=ReturnDocument.BEFORE,
         )
         if not document:
-            group = await self.collection.find_one({"_id": chat_id}, {"enabled": 1})
-            if not group or not group.get("enabled"):
-                return None
-            return await self.next_global_response()
+            return None
 
-        responses = document["responses"]
+        responses = document.get("responses", []) + global_responses
+        if not responses:
+            return None
         return responses[document.get("next_index", 0) % len(responses)]
+
+    async def reply_chance(self, chat_id: int) -> int | None:
+        document = await self.collection.find_one(
+            {"_id": chat_id, "enabled": True},
+            {"reply_chance": 1},
+        )
+        return document.get("reply_chance", DEFAULT_REPLY_CHANCE) if document else None
+
+    async def set_reply_chance(self, chat_id: int, chance: int) -> None:
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {
+                "$set": {"reply_chance": chance},
+                "$setOnInsert": {
+                    "enabled": False,
+                    "responses": [],
+                    "next_index": 0,
+                    "reactions_enabled": True,
+                    "reaction_chance": DEFAULT_REACTION_CHANCE,
+                    "reactions": DEFAULT_REACTIONS,
+                },
+            },
+            upsert=True,
+        )
 
     async def get_global_responses(self) -> list[Any]:
         document = await self.settings_collection.find_one({"_id": "global_responses"})
@@ -141,7 +154,7 @@ class GroupRepository:
             return "full"
         await self.settings_collection.update_one(
             {"_id": "global_responses"},
-            {"$push": {"responses": response}, "$setOnInsert": {"next_index": 0}},
+            {"$push": {"responses": response}},
             upsert=True,
         )
         return "added"
@@ -153,7 +166,7 @@ class GroupRepository:
         removed = responses.pop(one_based_index - 1)
         await self.settings_collection.update_one(
             {"_id": "global_responses"},
-            {"$set": {"responses": responses, "next_index": 0}},
+            {"$set": {"responses": responses}},
             upsert=True,
         )
         return removed
@@ -162,32 +175,10 @@ class GroupRepository:
         responses = await self.get_global_responses()
         await self.settings_collection.update_one(
             {"_id": "global_responses"},
-            {"$set": {"responses": [], "next_index": 0}},
+            {"$set": {"responses": []}},
             upsert=True,
         )
         return len(responses)
-
-    async def next_global_response(self) -> Any | None:
-        document = await self.settings_collection.find_one_and_update(
-            {"_id": "global_responses", "responses.0": {"$exists": True}},
-            [
-                {
-                    "$set": {
-                        "next_index": {
-                            "$mod": [
-                                {"$add": [{"$ifNull": ["$next_index", 0]}, 1]},
-                                {"$size": "$responses"},
-                            ]
-                        }
-                    }
-                }
-            ],
-            return_document=ReturnDocument.BEFORE,
-        )
-        if not document:
-            return None
-        responses = document["responses"]
-        return responses[document.get("next_index", 0) % len(responses)]
 
     async def set_reactions_enabled(self, chat_id: int, enabled: bool) -> None:
         await self.collection.update_one(
@@ -198,6 +189,7 @@ class GroupRepository:
                     "enabled": False,
                     "responses": [],
                     "next_index": 0,
+                    "reply_chance": DEFAULT_REPLY_CHANCE,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
                 },
@@ -214,6 +206,7 @@ class GroupRepository:
                     "enabled": False,
                     "responses": [],
                     "next_index": 0,
+                    "reply_chance": DEFAULT_REPLY_CHANCE,
                     "reactions_enabled": True,
                     "reactions": DEFAULT_REACTIONS,
                 },
@@ -238,6 +231,7 @@ class GroupRepository:
                     "enabled": False,
                     "responses": [],
                     "next_index": 0,
+                    "reply_chance": DEFAULT_REPLY_CHANCE,
                     "reactions_enabled": True,
                     "reaction_chance": DEFAULT_REACTION_CHANCE,
                 },

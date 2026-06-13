@@ -14,18 +14,19 @@ class FakeCollection:
             not self.document
             or self.document["_id"] != query["_id"]
             or not self.document.get("enabled")
-            or not self.document.get("responses")
         ):
             return None
 
         previous = deepcopy(self.document)
-        self.document["next_index"] = (self.document.get("next_index", 0) + 1) % len(
-            self.document["responses"]
-        )
+        self.document["next_index"] = self.document.get("next_index", 0) + 1
         return previous
 
     async def find_one(self, query, projection=None):
-        if self.document and self.document["_id"] == query["_id"]:
+        if (
+            self.document
+            and self.document["_id"] == query["_id"]
+            and ("enabled" not in query or self.document.get("enabled") == query["enabled"])
+        ):
             return deepcopy(self.document)
         return None
 
@@ -46,6 +47,9 @@ class FakeSettingsCollection:
             self.document["responses"]
         )
         return previous
+
+    async def find_one(self, query):
+        return deepcopy(self.document)
 
 
 def repository_with(document, global_responses=None) -> GroupRepository:
@@ -91,7 +95,7 @@ async def test_next_response_returns_none_when_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_next_response_uses_global_defaults_when_group_has_none() -> None:
+async def test_next_response_uses_global_replies_when_group_has_none() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": [], "next_index": 0},
         global_responses=["global one", "global two"],
@@ -102,10 +106,30 @@ async def test_next_response_uses_global_defaults_when_group_has_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_group_responses_take_priority_over_global_defaults() -> None:
+async def test_next_response_combines_local_and_global_replies() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0},
         global_responses=["global"],
     )
 
     assert await repository.next_response(123) == "local"
+    assert await repository.next_response(123) == "global"
+    assert await repository.next_response(123) == "local"
+
+
+@pytest.mark.asyncio
+async def test_reply_chance_defaults_to_100_for_enabled_existing_group() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0}
+    )
+
+    assert await repository.reply_chance(123) == 100
+
+
+@pytest.mark.asyncio
+async def test_reply_chance_returns_none_for_disabled_group() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": False, "responses": ["local"], "next_index": 0}
+    )
+
+    assert await repository.reply_chance(123) is None

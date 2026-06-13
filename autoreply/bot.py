@@ -53,6 +53,10 @@ def choose_reaction(chance: int, reactions: list[str]) -> str | None:
     return random.choice(reactions)
 
 
+def chance_succeeds(chance: int) -> bool:
+    return random.randint(1, 100) <= chance
+
+
 def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
     buttons = []
     if links.get("updates"):
@@ -155,12 +159,18 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    f"Reply Chance: {document.get('reply_chance', 100)}%",
+                    callback_data=f"mgr:reply-chance:{chat_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     f"Reaction Chance: {document.get('reaction_chance', 25)}%",
                     callback_data=f"mgr:chance:{chat_id}",
                 ),
             ],
             [
-                InlineKeyboardButton("Clear Replies", callback_data=f"mgr:clear:{chat_id}"),
+                InlineKeyboardButton("Clear Local Replies", callback_data=f"mgr:clear:{chat_id}"),
                 InlineKeyboardButton("Refresh", callback_data=f"mgr:open:{chat_id}"),
             ],
         ]
@@ -208,7 +218,7 @@ async def global_manager_content(repository: GroupRepository) -> tuple[str, Inli
     return (
         "Global Default Replies\n\n"
         f"Replies: {len(responses)}\n\n"
-        "Used only when an enabled group has no group-specific replies.",
+        "Included in the reply rotation of every enabled group.",
         global_manager_keyboard(),
     )
 
@@ -217,17 +227,13 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
     chat = await client.get_chat(chat_id)
     document = await repository.get(chat_id)
     local_count = len(document["responses"])
-    global_count = len(await repository.get_global_responses()) if local_count == 0 else 0
-    reply_status = (
-        f"{local_count}"
-        if local_count
-        else f"0 local, using {global_count} global default(s)"
-    )
+    global_count = len(await repository.get_global_responses())
     text = (
         "Auto Reply Manager\n\n"
         f"Group: {chat.title or chat_id}\n"
         f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
-        f"Replies: {reply_status}\n"
+        f"Replies: {local_count} local + {global_count} global\n"
+        f"Reply chance: {document.get('reply_chance', 100)}%\n"
         f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
         f"Reaction chance: {document.get('reaction_chance', 25)}%"
     )
@@ -354,6 +360,10 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             document = await repository.get(chat_id)
             chance = (document.get("reaction_chance", 25) + 25) % 125
             await repository.set_reaction_chance(chat_id, chance)
+        elif action == "reply-chance":
+            document = await repository.get(chat_id)
+            chance = (document.get("reply_chance", 100) + 25) % 125
+            await repository.set_reply_chance(chat_id, chance)
         elif action == "clear":
             await repository.clear_responses(chat_id)
         elif action.startswith("delete-"):
@@ -365,19 +375,29 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await repository.remove_response(chat_id, index)
         elif action == "list":
             document = await repository.get(chat_id)
-            responses = document["responses"]
-            labels = [await display_response_label(client, response) for response in responses]
-            text = (
-                "No replies configured."
-                if not responses
-                else "Configured replies:\n"
-                + "\n".join(
-                    f"{index}. {label}" for index, label in enumerate(labels, start=1)
+            local_responses = document["responses"]
+            global_responses = await repository.get_global_responses()
+            local_labels = [
+                await display_response_label(client, response) for response in local_responses
+            ]
+            global_labels = [
+                await display_response_label(client, response) for response in global_responses
+            ]
+            sections = []
+            if local_labels:
+                sections.append(
+                    "Local replies:\n"
+                    + "\n".join(f"{index}. {label}" for index, label in enumerate(local_labels, 1))
                 )
-            )
+            if global_labels:
+                sections.append(
+                    "Global replies (read-only):\n"
+                    + "\n".join(f"G{index}. {label}" for index, label in enumerate(global_labels, 1))
+                )
+            text = "\n\n".join(sections) if sections else "No replies configured."
             buttons = [
                 [InlineKeyboardButton(f"Delete {index}", callback_data=f"mgr:delete-{index}:{chat_id}")]
-                for index in range(1, min(len(responses), 20) + 1)
+                for index in range(1, min(len(local_responses), 20) + 1)
             ]
             buttons.append([InlineKeyboardButton("Back", callback_data=f"mgr:open:{chat_id}")])
             await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
@@ -520,7 +540,12 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(filters.create(eligible_message), group=1)
     async def handle_group_message(client: Client, message: Message) -> None:
-        response = await repository.next_response(message.chat.id)
+        reply_chance = await repository.reply_chance(message.chat.id)
+        response = (
+            await repository.next_response(message.chat.id)
+            if reply_chance is not None and chance_succeeds(reply_chance)
+            else None
+        )
         if response:
             try:
                 await send_response(client, message, response)

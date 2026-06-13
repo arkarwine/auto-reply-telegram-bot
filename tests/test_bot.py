@@ -7,6 +7,7 @@ from pyrogram.enums import ParseMode
 from autoreply.bot import (
     BOT_MENU_COMMANDS,
     START_TEXT,
+    chance_succeeds,
     choose_reaction,
     command_argument,
     display_response_label,
@@ -51,6 +52,13 @@ def test_choose_reaction_selects_from_configured_reactions() -> None:
 
 def test_choose_reaction_returns_none_for_empty_list() -> None:
     assert choose_reaction(100, []) is None
+
+
+def test_reply_chance_check() -> None:
+    with patch("autoreply.bot.random.randint", return_value=26):
+        assert not chance_succeeds(25)
+    with patch("autoreply.bot.random.randint", return_value=25):
+        assert chance_succeeds(25)
 
 
 def test_bot_menu_contains_registered_commands() -> None:
@@ -165,6 +173,7 @@ def test_manager_keyboard_contains_private_controls() -> None:
         {
             "enabled": False,
             "reactions_enabled": True,
+            "reply_chance": 75,
             "reaction_chance": 25,
         },
     )
@@ -173,6 +182,7 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "Add Reply" in labels
     assert "View Replies" in labels
     assert "Enable" in labels
+    assert "Reply Chance: 75%" in labels
     assert "Reaction Chance: 25%" in labels
 
 

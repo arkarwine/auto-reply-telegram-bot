@@ -62,10 +62,10 @@ The owner can configure the `/start` and `/help` buttons in private chat:
 Calling one without a URL displays its current value. Links are persisted in
 MongoDB.
 
-The owner can open `/global_defaults` in private chat to manage global fallback
-replies. These are used only when an enabled group has no group-specific
-replies. Local group replies always take priority. Group administrators cannot
-view or change global defaults.
+The owner can open `/global_defaults` in private chat to manage global replies.
+Every enabled group rotates through its local replies and the global replies
+together. Group administrators can see global replies in **View Replies**, but
+cannot delete or change them.
 
 ## Private configuration
 
@@ -77,6 +77,7 @@ The private manager lets admins:
 - Enable or disable interactions.
 - Add any copyable Telegram message as a reply.
 - View, delete, or clear replies.
+- Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%.
 - Enable or disable reactions.
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
 
