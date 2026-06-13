@@ -49,6 +49,7 @@ SUDOER_BOT_COMMANDS = [
     BotCommand("support", "💬 Set support link"),
     BotCommand("owner_link", "👤 Set owner link"),
     BotCommand("global_defaults", "🌐 Manage global replies"),
+    BotCommand("broadcast", "📣 Broadcast to groups"),
     BotCommand("start_img", "🖼 Set start image"),
 ]
 START_TEXT = (
@@ -68,6 +69,7 @@ HELP_TEXT = (
 SUDOER_HELP_TEXT = (
     f"{HELP_TEXT}\n\n"
     "🌐 /global_defaults — global replies\n"
+    "📣 /broadcast — message every group\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
 )
@@ -130,27 +132,26 @@ async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2)
 
 
 def link_keyboard(links: dict[str, str], username: str | None = None) -> InlineKeyboardMarkup:
-    buttons = []
+    rows = []
     if username:
-        buttons.append(
-            InlineKeyboardButton(
-                "➕ Add to Group",
-                url=f"https://t.me/{username}?startgroup=true",
-                style=ButtonStyle.SUCCESS,
-            )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "➕ Add to Group",
+                    url=f"https://t.me/{username}?startgroup=true",
+                    style=ButtonStyle.SUCCESS,
+                )
+            ]
         )
-    buttons.append(InlineKeyboardButton("❓ Help", callback_data="start:help", style=ButtonStyle.PRIMARY))
+    buttons = [InlineKeyboardButton("❓ Help", callback_data="start:help")]
     if links.get("updates"):
-        buttons.append(
-            InlineKeyboardButton("📢 Updates", url=links["updates"], style=ButtonStyle.PRIMARY)
-        )
+        buttons.append(InlineKeyboardButton("📢 Updates", url=links["updates"]))
     if links.get("support"):
-        buttons.append(
-            InlineKeyboardButton("💬 Support", url=links["support"], style=ButtonStyle.SUCCESS)
-        )
+        buttons.append(InlineKeyboardButton("💬 Support", url=links["support"]))
     if links.get("owner_link"):
         buttons.append(InlineKeyboardButton("👤 Owner", url=links["owner_link"]))
-    return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
+    rows.extend(buttons[index : index + 2] for index in range(0, len(buttons), 2))
+    return InlineKeyboardMarkup(rows)
 
 
 async def register_bot_commands(app: Client, settings: Settings) -> None:
@@ -353,6 +354,32 @@ async def send_response(client: Client, incoming: Message, response: object) -> 
         )
         return
     raise ValueError("Unsupported stored response")
+
+
+async def broadcast_response(
+    client: Client,
+    repository: GroupRepository,
+    response: dict,
+) -> tuple[int, int]:
+    sent = 0
+    failed = 0
+    for chat_id in await repository.group_ids():
+        try:
+            await retry_flood_wait(
+                lambda chat_id=chat_id: client.copy_message(
+                    chat_id=chat_id,
+                    from_chat_id=response["chat_id"],
+                    message_id=response["message_id"],
+                )
+            )
+            sent += 1
+        except (Forbidden, ChatAdminRequired):
+            failed += 1
+            await repository.set_enabled(chat_id, False)
+        except RPCError:
+            failed += 1
+            LOGGER.exception("Could not broadcast to chat %s", chat_id)
+    return sent, failed
 
 
 async def is_group_admin(client: Client, message: Message) -> bool:
@@ -659,6 +686,14 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         text, keyboard = await global_manager_content(repository)
         await message.reply_text(text, reply_markup=keyboard)
+
+    @app.on_message(filters.private & filters.command("broadcast"))
+    async def broadcast_command(_: Client, message: Message) -> None:
+        if not is_sudoer(settings, message):
+            await message.reply_text("⛔ Sudoers only.")
+            return
+        await repository.set_broadcast_capture(message.from_user.id)
+        await message.reply_text("📣 Send any message to broadcast.\n\n/cancel to stop.")
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
@@ -977,6 +1012,29 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await query.message.edit_text(text, reply_markup=keyboard)
         await query.answer("✅ Updated")
 
+    @app.on_callback_query(filters.regex(r"^broadcast:"))
+    async def broadcast_callback(client: Client, query: CallbackQuery) -> None:
+        if not query.message or not query_is_sudoer(settings, query):
+            await query.answer("⛔ Sudoers only.", show_alert=True)
+            return
+        action = query.data.split(":", 1)[1]
+        if action == "cancel":
+            await repository.clear_capture_group(query.from_user.id)
+            await query.message.edit_text("✖️ Broadcast cancelled.")
+            await query.answer()
+            return
+        response = await repository.get_pending_broadcast(query.from_user.id)
+        if action != "send" or not response:
+            await query.answer("⚠️ Broadcast expired.", show_alert=True)
+            return
+        await query.answer("📣 Broadcasting…")
+        await query.message.edit_text("📣 Broadcasting…")
+        sent, failed = await broadcast_response(client, repository, response)
+        await repository.clear_capture_group(query.from_user.id)
+        await query.message.edit_text(
+            f"✅ Broadcast complete\n\n📨 Sent: {sent}\n⚠️ Failed: {failed}"
+        )
+
     @app.on_message(filters.private & filters.command("cancel"))
     async def cancel_capture(_: Client, message: Message) -> None:
         if message.from_user:
@@ -996,6 +1054,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "autoreply",
                 "reaction",
                 "global_defaults",
+                "broadcast",
                 "start_img",
             ]
         ),
@@ -1004,12 +1063,45 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def capture_private_message(client: Client, message: Message) -> None:
         if not message.from_user:
             return
+        broadcast_capture = (
+            settings.is_sudoer(message.from_user.id)
+            and await repository.is_broadcast_capture(message.from_user.id)
+        )
         global_capture = (
             settings.is_sudoer(message.from_user.id)
             and await repository.is_global_capture(message.from_user.id)
         )
         chat_id = await repository.get_capture_group(message.from_user.id)
-        if chat_id is None and not global_capture:
+        if chat_id is None and not global_capture and not broadcast_capture:
+            return
+        if broadcast_capture:
+            response = {
+                "kind": "message",
+                "chat_id": message.chat.id,
+                "message_id": message.id,
+                "label": message_label(message),
+                "has_preview": bool(message.text or message.caption),
+            }
+            await repository.set_pending_broadcast(message.from_user.id, response)
+            group_count = len(await repository.group_ids())
+            await message.reply_text(
+                f"📣 Send this message to {group_count} known groups?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "📣 Broadcast",
+                                callback_data="broadcast:send",
+                                style=ButtonStyle.SUCCESS,
+                            ),
+                            InlineKeyboardButton(
+                                "✖️ Cancel",
+                                callback_data="broadcast:cancel",
+                            ),
+                        ]
+                    ]
+                ),
+            )
             return
         if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
             await repository.clear_capture_group(message.from_user.id)

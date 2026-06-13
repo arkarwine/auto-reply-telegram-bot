@@ -65,6 +65,9 @@ class GroupRepository:
             upsert=True,
         )
 
+    async def group_ids(self) -> list[int]:
+        return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
+
     async def add_response(self, chat_id: int, response: Any) -> str:
         document = await self.get(chat_id)
         responses = document["responses"]
@@ -356,16 +359,50 @@ class GroupRepository:
     async def set_capture_group(self, user_id: int, chat_id: int) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},
-            {"$set": {"capture_chat_id": chat_id}, "$unset": {"capture_global": ""}},
+            {
+                "$set": {"capture_chat_id": chat_id},
+                "$unset": {"capture_global": "", "capture_broadcast": "", "pending_broadcast": ""},
+            },
             upsert=True,
         )
 
     async def set_global_capture(self, user_id: int) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},
-            {"$set": {"capture_global": True}, "$unset": {"capture_chat_id": ""}},
+            {
+                "$set": {"capture_global": True},
+                "$unset": {"capture_chat_id": "", "capture_broadcast": "", "pending_broadcast": ""},
+            },
             upsert=True,
         )
+
+    async def set_broadcast_capture(self, user_id: int) -> None:
+        await self.states_collection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {"capture_broadcast": True},
+                "$unset": {"capture_chat_id": "", "capture_global": "", "pending_broadcast": ""},
+            },
+            upsert=True,
+        )
+
+    async def is_broadcast_capture(self, user_id: int) -> bool:
+        document = await self.states_collection.find_one({"_id": user_id})
+        return bool(document and document.get("capture_broadcast"))
+
+    async def set_pending_broadcast(self, user_id: int, response: Any) -> None:
+        await self.states_collection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {"pending_broadcast": response},
+                "$unset": {"capture_chat_id": "", "capture_global": "", "capture_broadcast": ""},
+            },
+            upsert=True,
+        )
+
+    async def get_pending_broadcast(self, user_id: int) -> Any | None:
+        document = await self.states_collection.find_one({"_id": user_id})
+        return document.get("pending_broadcast") if document else None
 
     async def is_global_capture(self, user_id: int) -> bool:
         document = await self.states_collection.find_one({"_id": user_id})

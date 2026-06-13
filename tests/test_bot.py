@@ -11,6 +11,7 @@ from autoreply.bot import (
     SUDOER_BOT_COMMANDS,
     SUDOER_HELP_TEXT,
     START_TEXT,
+    broadcast_response,
     chance_succeeds,
     choose_reaction,
     command_argument,
@@ -142,6 +143,7 @@ def test_public_bot_menu_hides_sudoer_commands() -> None:
         "support",
         "owner_link",
         "global_defaults",
+        "broadcast",
         "start_img",
     }
 
@@ -183,6 +185,34 @@ def test_start_text_contains_setup_steps() -> None:
     assert "✨ Auto Reply" in START_TEXT
     assert "/global_defaults" not in HELP_TEXT
     assert "/global_defaults" in SUDOER_HELP_TEXT
+    assert "/broadcast" in SUDOER_HELP_TEXT
+
+
+@pytest.mark.asyncio
+async def test_broadcast_response_copies_to_every_known_group() -> None:
+    class FakeRepository:
+        async def group_ids(self):
+            return [-1001, -1002]
+
+        async def set_enabled(self, chat_id, enabled):
+            raise AssertionError("No group should be disabled")
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def copy_message(self, **kwargs):
+            self.calls.append(kwargs)
+
+    client = FakeClient()
+    sent, failed = await broadcast_response(
+        client,
+        FakeRepository(),
+        {"chat_id": 123, "message_id": 42},
+    )
+
+    assert (sent, failed) == (2, 0)
+    assert [call["chat_id"] for call in client.calls] == [-1001, -1002]
 
 
 def test_response_label_preserves_existing_text_responses() -> None:
@@ -309,11 +339,19 @@ def test_link_keyboard_uses_configured_links() -> None:
         "https://t.me/owner",
     ]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["➕ Add to Group", "❓ Help"],
-        ["📢 Updates", "💬 Support"],
-        ["👤 Owner"],
+        ["➕ Add to Group"],
+        ["❓ Help", "📢 Updates"],
+        ["💬 Support", "👤 Owner"],
     ]
     assert keyboard.inline_keyboard[0][0].url == "https://t.me/example_bot?startgroup=true"
+    styles = {
+        button.text: button.style for row in keyboard.inline_keyboard for button in row
+    }
+    assert styles["➕ Add to Group"] == ButtonStyle.SUCCESS
+    assert all(
+        styles[label] == ButtonStyle.DEFAULT
+        for label in ("❓ Help", "📢 Updates", "💬 Support", "👤 Owner")
+    )
 
 
 def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:

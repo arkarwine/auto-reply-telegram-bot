@@ -80,6 +80,10 @@ cannot delete or change them.
 New global replies become available immediately in every enabled group with
 global replies turned on, including groups without a saved local reply.
 
+Owner and sudoers can use `/broadcast` in private chat, send any Telegram
+message, then confirm delivery to every known group. Broadcasts retry flood
+waits and report sent/failed totals.
+
 ## Private configuration
 
 A group administrator sends `/autoreply` in the group. The bot replies with an
