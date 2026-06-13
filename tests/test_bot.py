@@ -15,6 +15,7 @@ from autoreply.bot import (
     display_response_label,
     global_manager_keyboard,
     interaction_allowed,
+    is_sudoer,
     link_keyboard,
     manager_keyboard,
     message_label,
@@ -26,6 +27,7 @@ from autoreply.bot import (
     next_option,
     valid_link,
 )
+from autoreply.config import Settings
 
 
 def test_command_argument_returns_remaining_text() -> None:
@@ -41,6 +43,24 @@ def test_command_argument_handles_missing_argument() -> None:
 def test_command_argument_supports_autoreply_action() -> None:
     message = SimpleNamespace(text="/autoreply off")
     assert command_argument(message) == "off"
+
+
+def test_is_sudoer_accepts_owner_and_extra_sudoers() -> None:
+    settings = Settings(
+        api_id=123,
+        api_hash="hash",
+        bot_token="token",
+        mongodb_uri="mongodb://localhost",
+        mongodb_database="telegram_autoreply",
+        owner_id=1,
+        sudoer_ids=(2, 3),
+        storage_chat_id=None,
+    )
+
+    assert is_sudoer(settings, SimpleNamespace(from_user=SimpleNamespace(id=1)))
+    assert is_sudoer(settings, SimpleNamespace(from_user=SimpleNamespace(id=2)))
+    assert not is_sudoer(settings, SimpleNamespace(from_user=SimpleNamespace(id=4)))
+    assert not is_sudoer(settings, SimpleNamespace(from_user=None))
 
 
 def test_choose_reaction_returns_none_when_chance_misses() -> None:
@@ -221,7 +241,7 @@ def test_manager_keyboard_contains_private_controls() -> None:
             "reply_chance": 75,
             "reaction_chance": 25,
             "cooldown_seconds": 0,
-            "rate_limit_per_minute": 5,
+            "rate_limit_per_minute": 0,
             "global_replies_enabled": True,
         },
     )
@@ -233,7 +253,7 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "Reply Chance: 75%" in labels
     assert "Reaction Chance: 25%" in labels
     assert "Cooldown: 0s" in labels
-    assert "Rate: 5/min" in labels
+    assert "Rate: Unlimited/min" in labels
     assert "Global Replies On" in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["Add Reply"] == ButtonStyle.SUCCESS

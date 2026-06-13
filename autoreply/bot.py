@@ -149,6 +149,14 @@ def valid_link(value: str) -> bool:
     return value.startswith(("https://", "http://", "tg://"))
 
 
+def is_sudoer(settings: Settings, message: Message) -> bool:
+    return bool(message.from_user and settings.is_sudoer(message.from_user.id))
+
+
+def query_is_sudoer(settings: Settings, query: CallbackQuery) -> bool:
+    return bool(query.from_user and settings.is_sudoer(query.from_user.id))
+
+
 def start_image_file_id(message: Message) -> str | None:
     source = message if message.photo else message.reply_to_message
     return source.photo.file_id if source and source.photo else None
@@ -520,16 +528,16 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(filters.private & filters.command("global_defaults"))
     async def global_defaults_command(_: Client, message: Message) -> None:
-        if not message.from_user or message.from_user.id != settings.owner_id:
-            await message.reply_text("Only the bot owner can manage global default replies.")
+        if not is_sudoer(settings, message):
+            await message.reply_text("Only the bot owner or sudoers can manage global default replies.")
             return
         text, keyboard = await global_manager_content(repository)
         await message.reply_text(text, reply_markup=keyboard)
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
-        if not message.from_user or message.from_user.id != settings.owner_id:
-            await message.reply_text("Only the bot owner can configure start-menu links.")
+        if not is_sudoer(settings, message):
+            await message.reply_text("Only the bot owner or sudoers can configure start-menu links.")
             return
 
         name = message.command[0].lower()
@@ -549,8 +557,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(filters.private & filters.command("start_img"))
     async def start_image_command(_: Client, message: Message) -> None:
-        if not message.from_user or message.from_user.id != settings.owner_id:
-            await message.reply_text("Only the bot owner can configure the start image.")
+        if not is_sudoer(settings, message):
+            await message.reply_text("Only the bot owner or sudoers can configure the start image.")
             return
         argument = command_argument(message).lower()
         if argument == "off":
@@ -772,8 +780,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_callback_query(filters.regex(r"^global:"))
     async def global_callback(client: Client, query: CallbackQuery) -> None:
-        if not query.from_user or not query.message or query.from_user.id != settings.owner_id:
-            await query.answer("Only the bot owner can manage global replies.", show_alert=True)
+        if not query.message or not query_is_sudoer(settings, query):
+            await query.answer("Only the bot owner or sudoers can manage global replies.", show_alert=True)
             return
         action = query.data.split(":", 1)[1]
         if action == "add":
@@ -896,7 +904,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         if not message.from_user:
             return
         global_capture = (
-            message.from_user.id == settings.owner_id
+            settings.is_sudoer(message.from_user.id)
             and await repository.is_global_capture(message.from_user.id)
         )
         chat_id = await repository.get_capture_group(message.from_user.id)

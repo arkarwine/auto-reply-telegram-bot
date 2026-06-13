@@ -4,6 +4,16 @@ import os
 from dotenv import load_dotenv
 
 
+def parse_id_list(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return ()
+    raw_ids = value.replace(",", " ").split()
+    try:
+        return tuple(dict.fromkeys(int(raw_id) for raw_id in raw_ids))
+    except ValueError as exc:
+        raise RuntimeError("SUDOER_IDS must contain only integer Telegram user IDs") from exc
+
+
 @dataclass(frozen=True)
 class Settings:
     api_id: int
@@ -12,7 +22,11 @@ class Settings:
     mongodb_uri: str
     mongodb_database: str
     owner_id: int
+    sudoer_ids: tuple[int, ...]
     storage_chat_id: int | None
+
+    def is_sudoer(self, user_id: int | None) -> bool:
+        return user_id is not None and user_id in {self.owner_id, *self.sudoer_ids}
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,6 +45,7 @@ class Settings:
         try:
             api_id = int(required["TELEGRAM_API_ID"])
             owner_id = int(required["OWNER_ID"])
+            sudoer_ids = parse_id_list(os.getenv("SUDOER_IDS"))
             storage_chat_id = int(os.environ["STORAGE_CHAT_ID"]) if os.getenv("STORAGE_CHAT_ID") else None
         except ValueError as exc:
             raise RuntimeError("TELEGRAM_API_ID, OWNER_ID, and STORAGE_CHAT_ID must be integers") from exc
@@ -42,5 +57,6 @@ class Settings:
             mongodb_uri=required["MONGODB_URI"],
             mongodb_database=os.getenv("MONGODB_DATABASE", "telegram_autoreply"),
             owner_id=owner_id,
+            sudoer_ids=sudoer_ids,
             storage_chat_id=storage_chat_id,
         )

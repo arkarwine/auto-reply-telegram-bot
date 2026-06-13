@@ -71,14 +71,14 @@ def repository_with(document, global_responses=None) -> GroupRepository:
 
 
 @pytest.mark.asyncio
-async def test_new_group_defaults_to_enabled_with_minimal_rate_and_no_cooldown() -> None:
+async def test_new_group_defaults_to_enabled_with_unlimited_rate_and_no_cooldown() -> None:
     repository = repository_with(None)
 
     document = await repository.get(123)
 
     assert document["enabled"] is True
     assert document["cooldown_seconds"] == 0
-    assert document["rate_limit_per_minute"] == 5
+    assert document["rate_limit_per_minute"] == 0
 
 
 @pytest.mark.asyncio

@@ -46,8 +46,13 @@ Set your numeric Telegram user ID in `.env`:
 
 ```env
 OWNER_ID=123456789
+SUDOER_IDS=111111111,222222222
 STORAGE_CHAT_ID=-1001234567890
 ```
+
+`OWNER_ID` is the primary bot owner. `SUDOER_IDS` is optional and accepts
+comma- or space-separated Telegram user IDs. Owner and sudoers can configure
+global defaults, start-menu links, and the start image.
 
 `STORAGE_CHAT_ID` is optional but recommended. It should be a private channel
 where the bot is an administrator. Captured replies are copied there so they
@@ -87,7 +92,7 @@ The private manager lets admins:
 - Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%.
 - Configure a group cooldown of 0, 5, 15, 30, or 60 seconds. The default is 0.
 - Configure a rate limit of unlimited, 5, 10, 20, or 30 interactions per minute.
-  The default is 5 per minute.
+  The default is unlimited.
 - Enable or disable reactions.
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
 - Enable or disable global replies for the group.
