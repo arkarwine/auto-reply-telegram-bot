@@ -45,7 +45,13 @@ Set your numeric Telegram user ID in `.env`:
 
 ```env
 OWNER_ID=123456789
+STORAGE_CHAT_ID=-1001234567890
 ```
+
+`STORAGE_CHAT_ID` is optional but recommended. It should be a private channel
+where the bot is an administrator. Captured replies are copied there so they
+remain available even if the admin deletes the private submission. Without it,
+the bot references the message submitted in private chat.
 
 The owner can configure the `/start` and `/help` buttons in private chat:
 
@@ -56,37 +62,28 @@ The owner can configure the `/start` and `/help` buttons in private chat:
 Calling one without a URL displays its current value. Links are persisted in
 MongoDB.
 
-## Group commands
+## Private configuration
 
-Group administrators can use:
+A group administrator sends `/autoreply` in the group. The bot replies with an
+**Open Auto Reply Manager** button, then deletes both messages after 30 seconds.
 
-- `/autoreply on` and `/autoreply off`
-- `/autoreply add <text>`
-- Reply to any copyable Telegram message with `/autoreply add`
-- `/autoreply remove <number>`
-- `/autoreply list`
-- `/autoreply clear`
-- `/autoreply status`
-- `/autoreply help`
-- `/reaction on` and `/reaction off`
-- `/reaction chance <0-100>`
-- `/reaction add <emoji>`
-- `/reaction remove <emoji>`
-- `/reaction list`
+The private manager lets admins:
 
-Anyone in the group can use `/autoreply` to view the full command catalog.
-Settings commands are admin-only. Commands, service events, and messages sent
-by other bots are ignored. Enabling auto-replies also acts as the master switch
-for all interactions. Random reactions default to a 25% chance.
+- Enable or disable interactions.
+- Add any copyable Telegram message as a reply.
+- View, delete, or clear replies.
+- Enable or disable reactions.
+- Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
+
+Configuration changes happen entirely in private chat. Commands, service
+events, and messages sent by other bots are ignored.
 
 Automatic Telegram text parsing is disabled, so literal text such as
 `<message>` and angle brackets inside configured replies remains visible.
 
-After adding the bot as an administrator, run `/autoreply on`. Text replies
-also require at least one message added with `/autoreply add <text>`.
-To add photos, videos, stickers, documents, voice notes, polls, or other
-Telegram messages, reply to the message with `/autoreply add`. The original
-source message must remain available so the bot can copy it later.
+After adding the bot as an administrator, send `/autoreply` in the group and
+open the private manager. Use **Add Reply**, then send text, a photo, video,
+sticker, document, voice note, poll, or another copyable Telegram message.
 The bot registers its command menu during startup and responds to `/start` or
 `/help` in private chat with setup instructions.
 

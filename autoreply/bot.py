@@ -1,13 +1,14 @@
 import logging
 import random
+import asyncio
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
 from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from autoreply.config import Settings
-from autoreply.repository import GroupRepository, MAX_REACTIONS, MAX_RESPONSES
+from autoreply.repository import GroupRepository, MAX_RESPONSES
 
 
 logging.basicConfig(
@@ -22,8 +23,7 @@ COMMANDS = [
 BOT_MENU_COMMANDS = [
     BotCommand("start", "Open the bot guide"),
     BotCommand("help", "Show setup and usage help"),
-    BotCommand("autoreply", "Show all available commands"),
-    BotCommand("reaction", "Manage reactions: /reaction help"),
+    BotCommand("autoreply", "Open the private group manager"),
     BotCommand("updates", "Owner: configure updates button"),
     BotCommand("support", "Owner: configure support button"),
     BotCommand("owner_link", "Owner: configure owner button"),
@@ -34,41 +34,16 @@ START_TEXT = (
     "Quick setup:\n"
     "1. Add me to your group as an administrator.\n"
     "2. Disable privacy mode through BotFather so I can see group messages.\n"
-    "3. Add text with /autoreply add <message>, or reply to any message with /autoreply add.\n"
-    "4. Enable interactions with /autoreply on.\n\n"
-    "Use /autoreply in the group to view every available command."
+    "3. Send /autoreply in the group.\n"
+    "4. Open the private manager to add replies and enable interactions.\n\n"
+    "All configuration happens privately, keeping the group clean."
 )
-COMMAND_CATALOG = (
-    "Available commands:\n\n"
-    "Replies\n"
-    "/autoreply on - enable interactions\n"
-    "/autoreply off - disable interactions\n"
-    "/autoreply add <message> - add a text response\n"
-    "/autoreply add - reply to any message to add it\n"
-    "/autoreply remove <number> - remove a response\n"
-    "/autoreply list - list responses\n"
-    "/autoreply clear - remove all responses\n"
-    "/autoreply status - show current status\n\n"
-    "Reactions\n"
-    "/reaction on - enable random reactions\n"
-    "/reaction off - disable random reactions\n"
-    "/reaction chance <0-100> - set probability\n"
-    "/reaction add <emoji> - add a reaction\n"
-    "/reaction remove <emoji> - remove a reaction\n"
-    "/reaction list - list reactions\n\n"
-    "Only group administrators can change settings."
-)
+MANAGER_DELETE_DELAY = 30
 
 
 def command_argument(message: Message) -> str:
     text = message.text or ""
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
-
-
-def command_action(message: Message) -> tuple[str, str]:
-    argument = command_argument(message)
-    parts = argument.split(maxsplit=1)
-    return (parts[0].lower(), parts[1].strip() if len(parts) == 2 else "") if parts else ("", "")
 
 
 def choose_reaction(chance: int, reactions: list[str]) -> str | None:
@@ -90,18 +65,6 @@ def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
 
 def valid_link(value: str) -> bool:
     return value.startswith(("https://", "http://", "tg://"))
-
-
-def response_from_message(message: Message) -> dict[str, int | str] | None:
-    replied = message.reply_to_message
-    if not replied:
-        return None
-    return {
-        "kind": "message",
-        "chat_id": replied.chat.id,
-        "message_id": replied.id,
-        "label": str(replied.media or "text"),
-    }
 
 
 def response_label(response: object) -> str:
@@ -134,6 +97,72 @@ async def is_group_admin(client: Client, message: Message) -> bool:
     return member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}
 
 
+async def user_is_group_admin(client: Client, chat_id: int, user_id: int) -> bool:
+    try:
+        member = await client.get_chat_member(chat_id, user_id)
+    except RPCError:
+        return False
+    return member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}
+
+
+async def delete_later(*messages: Message) -> None:
+    await asyncio.sleep(MANAGER_DELETE_DELAY)
+    for message in messages:
+        try:
+            await message.delete()
+        except RPCError:
+            pass
+
+
+def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
+    enabled_label = "Disable" if document["enabled"] else "Enable"
+    reactions_label = "Reactions Off" if document.get("reactions_enabled", True) else "Reactions On"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Add Reply", callback_data=f"mgr:add:{chat_id}"),
+                InlineKeyboardButton("View Replies", callback_data=f"mgr:list:{chat_id}"),
+            ],
+            [
+                InlineKeyboardButton(enabled_label, callback_data=f"mgr:toggle:{chat_id}"),
+                InlineKeyboardButton(reactions_label, callback_data=f"mgr:reactions:{chat_id}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Reaction Chance: {document.get('reaction_chance', 25)}%",
+                    callback_data=f"mgr:chance:{chat_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton("Clear Replies", callback_data=f"mgr:clear:{chat_id}"),
+                InlineKeyboardButton("Refresh", callback_data=f"mgr:open:{chat_id}"),
+            ],
+        ]
+    )
+
+
+async def manager_content(client: Client, repository: GroupRepository, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await client.get_chat(chat_id)
+    document = await repository.get(chat_id)
+    text = (
+        "Auto Reply Manager\n\n"
+        f"Group: {chat.title or chat_id}\n"
+        f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
+        f"Replies: {len(document['responses'])}\n"
+        f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
+        f"Reaction chance: {document.get('reaction_chance', 25)}%"
+    )
+    return text, manager_keyboard(chat_id, document)
+
+
+async def open_manager(client: Client, repository: GroupRepository, message: Message, chat_id: int) -> None:
+    if not message.from_user or not await user_is_group_admin(client, chat_id, message.from_user.id):
+        await message.reply_text("You are not an administrator of that group.")
+        return
+    text, keyboard = await manager_content(client, repository, chat_id)
+    await message.reply_text(text, reply_markup=keyboard)
+
+
 async def require_admin(client: Client, message: Message) -> bool:
     try:
         allowed = await is_group_admin(client, message)
@@ -150,9 +179,24 @@ async def require_admin(client: Client, message: Message) -> bool:
 
 def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
     @app.on_message(filters.private & filters.command(["start", "help"]))
-    async def private_help(_: Client, message: Message) -> None:
+    async def private_help(client: Client, message: Message) -> None:
+        argument = command_argument(message)
+        if argument.startswith("configure_"):
+            try:
+                chat_id = int(argument.removeprefix("configure_"))
+            except ValueError:
+                await message.reply_text("Invalid group configuration link.")
+                return
+            await open_manager(client, repository, message, chat_id)
+            return
         links = await repository.get_links()
         await message.reply_text(START_TEXT, reply_markup=link_keyboard(links))
+
+    @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
+    async def private_manager_hint(_: Client, message: Message) -> None:
+        await message.reply_text(
+            "Send /autoreply in the group you want to configure, then open the private manager button."
+        )
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
@@ -179,133 +223,131 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     @app.on_message(group_commands)
     async def handle_command(client: Client, message: Message) -> None:
-        command = message.command[0].lower()
-        action, value = command_action(message)
-
-        if command == "autoreply" and action in {"", "help"}:
-            await message.reply_text(COMMAND_CATALOG)
-            return
-
         if not await require_admin(client, message):
             return
+        me = await client.get_me()
+        launcher = await message.reply_text(
+            "Configure this group privately.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Open Auto Reply Manager", url=f"https://t.me/{me.username}?start=configure_{message.chat.id}")]]
+            ),
+        )
+        asyncio.create_task(delete_later(message, launcher))
 
-        chat_id = message.chat.id
+    @app.on_callback_query(filters.regex(r"^mgr:"))
+    async def manager_callback(client: Client, query: CallbackQuery) -> None:
+        if not query.from_user or not query.message:
+            return
+        try:
+            _, action, raw_chat_id = query.data.split(":", 2)
+            chat_id = int(raw_chat_id)
+        except (AttributeError, ValueError):
+            await query.answer("Invalid manager action.", show_alert=True)
+            return
+        if not await user_is_group_admin(client, chat_id, query.from_user.id):
+            await query.answer("You are no longer an administrator of this group.", show_alert=True)
+            return
 
-        if command == "autoreply":
-            if action in {"on", "off"}:
-                enabled = action == "on"
-                await repository.set_enabled(chat_id, enabled)
-                if enabled:
-                    settings = await repository.get(chat_id)
-                    response_count = len(settings["responses"])
-                    note = (
-                        "\nNo reply messages are configured yet. Use /autoreply add <message>."
-                        if response_count == 0
-                        else f"\nConfigured reply messages: {response_count}."
-                    )
-                    await message.reply_text(
-                        "Interactions are now enabled."
-                        f"\nRandom reaction chance: {settings['reaction_chance']}%."
-                        f"{note}"
-                    )
-                else:
-                    await message.reply_text("Interactions are now disabled.")
-            elif action == "add":
-                copied_response = response_from_message(message)
-                if not value and not copied_response:
-                    await message.reply_text(
-                        "Usage: /autoreply add <message>, or reply to any message with /autoreply add"
-                    )
-                elif value and len(value) > 4000:
-                    await message.reply_text("Responses must be 4,000 characters or fewer.")
-                else:
-                    result = await repository.add_response(chat_id, copied_response or value)
-                    replies = {
-                        "added": "Response added.",
-                        "duplicate": "That response already exists.",
-                        "full": f"This group already has the maximum of {MAX_RESPONSES} responses.",
-                    }
-                    await message.reply_text(replies[result])
-            elif action == "remove":
-                if not value.isdigit():
-                    await message.reply_text("Usage: /autoreply remove <number>")
-                else:
-                    removed = await repository.remove_response(chat_id, int(value))
-                    await message.reply_text(
-                        "Response removed." if removed else "Response number not found."
-                    )
-            elif action == "list":
-                document = await repository.get(chat_id)
-                responses = document["responses"]
-                if not responses:
-                    await message.reply_text("No responses are configured.")
-                else:
-                    lines = [
-                        f"{index}. {response_label(response)}"
-                        for index, response in enumerate(responses, start=1)
-                    ]
-                    await message.reply_text(("Configured responses:\n" + "\n".join(lines))[:4096])
-            elif action == "clear":
-                count = await repository.clear_responses(chat_id)
-                await message.reply_text(f"Removed {count} response(s).")
-            elif action == "status":
-                document = await repository.get(chat_id)
-                await message.reply_text(
-                    f"Status: {'enabled' if document['enabled'] else 'disabled'}\n"
-                    f"Responses: {len(document['responses'])}\n"
-                    f"Reply mode: rotate in order\n"
-                    f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
-                    f"Reaction chance: {document.get('reaction_chance', 25)}%"
-                )
-            else:
-                await message.reply_text("Unknown action. Use /autoreply to view available commands.")
-        elif command == "reaction" and action in {"", "help"}:
-            await message.reply_text(
-                "Reaction commands:\n"
-                "/reaction on - enable random reactions\n"
-                "/reaction off - disable random reactions\n"
-                "/reaction chance <0-100> - set probability\n"
-                "/reaction add <emoji> - add a reaction\n"
-                "/reaction remove <emoji> - remove a reaction\n"
-                "/reaction list - list reactions"
+        if action == "add":
+            await repository.set_capture_group(query.from_user.id, chat_id)
+            await query.message.reply_text(
+                "Send any message now. Text, photos, videos, stickers, documents, voice notes, polls, and other copyable messages are supported.\n\nSend /cancel to stop."
             )
-        elif command == "reaction":
-            if action in {"on", "off"}:
-                enabled = action == "on"
-                await repository.set_reactions_enabled(chat_id, enabled)
-                await message.reply_text(
-                    f"Random reactions are now {'enabled' if enabled else 'disabled'}."
+            await query.answer("Waiting for a reply message.")
+            return
+        if action == "toggle":
+            document = await repository.get(chat_id)
+            await repository.set_enabled(chat_id, not document["enabled"])
+        elif action == "reactions":
+            document = await repository.get(chat_id)
+            await repository.set_reactions_enabled(
+                chat_id, not document.get("reactions_enabled", True)
+            )
+        elif action == "chance":
+            document = await repository.get(chat_id)
+            chance = (document.get("reaction_chance", 25) + 25) % 125
+            await repository.set_reaction_chance(chat_id, chance)
+        elif action == "clear":
+            await repository.clear_responses(chat_id)
+        elif action.startswith("delete-"):
+            try:
+                index = int(action.removeprefix("delete-"))
+            except ValueError:
+                await query.answer("Invalid reply number.", show_alert=True)
+                return
+            await repository.remove_response(chat_id, index)
+        elif action == "list":
+            document = await repository.get(chat_id)
+            responses = document["responses"]
+            text = (
+                "No replies configured."
+                if not responses
+                else "Configured replies:\n"
+                + "\n".join(
+                    f"{index}. {response_label(response)}"
+                    for index, response in enumerate(responses, start=1)
                 )
-            elif action == "chance":
-                if not value.isdigit() or not 0 <= int(value) <= 100:
-                    await message.reply_text("Usage: /reaction chance <0-100>")
-                else:
-                    await repository.set_reaction_chance(chat_id, int(value))
-                    await message.reply_text(f"Reaction chance set to {value}%.")
-            elif action == "add":
-                if not value or len(value) > 16 or " " in value:
-                    await message.reply_text("Usage: /reaction add <emoji>")
-                else:
-                    result = await repository.add_reaction(chat_id, value)
-                    replies = {
-                        "added": "Reaction added.",
-                        "duplicate": "That reaction already exists.",
-                        "full": f"This group already has the maximum of {MAX_REACTIONS} reactions.",
-                    }
-                    await message.reply_text(replies[result])
-            elif action == "remove":
-                if not value:
-                    await message.reply_text("Usage: /reaction remove <emoji>")
-                else:
-                    removed = await repository.remove_reaction(chat_id, value)
-                    await message.reply_text("Reaction removed." if removed else "Reaction not found.")
-            elif action == "list":
-                document = await repository.get(chat_id)
-                reactions = document.get("reactions", [])
-                output = "Configured reactions: " + (" ".join(reactions) if reactions else "none")
-                await message.reply_text(output)
-            else:
-                await message.reply_text("Unknown action. Use /reaction help.")
+            )
+            buttons = [
+                [InlineKeyboardButton(f"Delete {index}", callback_data=f"mgr:delete-{index}:{chat_id}")]
+                for index in range(1, min(len(responses), 20) + 1)
+            ]
+            buttons.append([InlineKeyboardButton("Back", callback_data=f"mgr:open:{chat_id}")])
+            await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
+            await query.answer()
+            return
+
+        text, keyboard = await manager_content(client, repository, chat_id)
+        await query.message.edit_text(text, reply_markup=keyboard)
+        await query.answer("Updated.")
+
+    @app.on_message(filters.private & filters.command("cancel"))
+    async def cancel_capture(_: Client, message: Message) -> None:
+        if message.from_user:
+            await repository.clear_capture_group(message.from_user.id)
+        await message.reply_text("Reply capture cancelled.")
+
+    @app.on_message(
+        filters.private
+        & ~filters.command(
+            ["start", "help", "cancel", "updates", "support", "owner_link", "autoreply", "reaction"]
+        ),
+        group=1,
+    )
+    async def capture_private_message(client: Client, message: Message) -> None:
+        if not message.from_user:
+            return
+        chat_id = await repository.get_capture_group(message.from_user.id)
+        if chat_id is None:
+            return
+        if not await user_is_group_admin(client, chat_id, message.from_user.id):
+            await repository.clear_capture_group(message.from_user.id)
+            await message.reply_text("You are no longer an administrator of that group.")
+            return
+        source = message
+        if settings.storage_chat_id:
+            try:
+                source = await client.copy_message(settings.storage_chat_id, message.chat.id, message.id)
+            except RPCError:
+                LOGGER.exception("Could not copy captured reply to storage chat")
+                await message.reply_text(
+                    "I could not save that message to the storage chat. Check STORAGE_CHAT_ID and my permissions."
+                )
+                return
+        response = {
+            "kind": "message",
+            "chat_id": source.chat.id,
+            "message_id": source.id,
+            "label": str(message.media or "text"),
+        }
+        result = await repository.add_response(chat_id, response)
+        await repository.clear_capture_group(message.from_user.id)
+        replies = {
+            "added": "Reply saved. Open the manager again from /autoreply in the group to make more changes.",
+            "duplicate": "That reply is already configured.",
+            "full": f"This group already has the maximum of {MAX_RESPONSES} replies.",
+        }
+        await message.reply_text(replies[result])
 
     async def eligible_message(_, __, message: Message) -> bool:
         return bool(

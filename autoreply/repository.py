@@ -14,6 +14,7 @@ class GroupRepository:
         self.client = AsyncMongoClient(mongodb_uri)
         self.collection = self.client[database_name]["groups"]
         self.settings_collection = self.client[database_name]["bot_settings"]
+        self.states_collection = self.client[database_name]["user_states"]
 
     async def ping(self) -> None:
         await self.client.admin.command("ping")
@@ -214,3 +215,17 @@ class GroupRepository:
     async def set_link(self, name: str, url: str | None) -> None:
         update = {"$set": {name: url}} if url else {"$unset": {name: ""}}
         await self.settings_collection.update_one({"_id": "links"}, update, upsert=True)
+
+    async def set_capture_group(self, user_id: int, chat_id: int) -> None:
+        await self.states_collection.update_one(
+            {"_id": user_id},
+            {"$set": {"capture_chat_id": chat_id}},
+            upsert=True,
+        )
+
+    async def get_capture_group(self, user_id: int) -> int | None:
+        document = await self.states_collection.find_one({"_id": user_id})
+        return document.get("capture_chat_id") if document else None
+
+    async def clear_capture_group(self, user_id: int) -> None:
+        await self.states_collection.delete_one({"_id": user_id})

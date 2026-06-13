@@ -12,6 +12,7 @@ class Settings:
     mongodb_uri: str
     mongodb_database: str
     owner_id: int
+    storage_chat_id: int | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -30,8 +31,9 @@ class Settings:
         try:
             api_id = int(required["TELEGRAM_API_ID"])
             owner_id = int(required["OWNER_ID"])
+            storage_chat_id = int(os.environ["STORAGE_CHAT_ID"]) if os.getenv("STORAGE_CHAT_ID") else None
         except ValueError as exc:
-            raise RuntimeError("TELEGRAM_API_ID and OWNER_ID must be integers") from exc
+            raise RuntimeError("TELEGRAM_API_ID, OWNER_ID, and STORAGE_CHAT_ID must be integers") from exc
 
         return cls(
             api_id=api_id,
@@ -40,4 +42,5 @@ class Settings:
             mongodb_uri=required["MONGODB_URI"],
             mongodb_database=os.getenv("MONGODB_DATABASE", "telegram_autoreply"),
             owner_id=owner_id,
+            storage_chat_id=storage_chat_id,
         )

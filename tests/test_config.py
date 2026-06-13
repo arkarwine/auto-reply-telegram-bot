@@ -9,6 +9,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("MONGODB_URI", "mongodb://localhost")
     monkeypatch.setenv("OWNER_ID", "456")
+    monkeypatch.setenv("STORAGE_CHAT_ID", "-100123")
     monkeypatch.delenv("MONGODB_DATABASE", raising=False)
 
     settings = Settings.from_env()
@@ -16,6 +17,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.api_id == 123
     assert settings.mongodb_database == "telegram_autoreply"
     assert settings.owner_id == 456
+    assert settings.storage_chat_id == -100123
 
 
 def test_settings_reports_missing_values(monkeypatch: pytest.MonkeyPatch) -> None:
