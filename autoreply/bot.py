@@ -27,6 +27,7 @@ BOT_MENU_COMMANDS = [
     BotCommand("updates", "Owner: configure updates button"),
     BotCommand("support", "Owner: configure support button"),
     BotCommand("owner_link", "Owner: configure owner button"),
+    BotCommand("global_defaults", "Owner: manage global default replies"),
 ]
 START_TEXT = (
     "Telegram Group Interaction Bot\n\n"
@@ -67,12 +68,37 @@ def valid_link(value: str) -> bool:
     return value.startswith(("https://", "http://", "tg://"))
 
 
+def message_label(message: Message, limit: int = 80) -> str:
+    preview = " ".join((message.text or message.caption or "").split())
+    if preview:
+        return preview if len(preview) <= limit else preview[: limit - 3] + "..."
+    media = str(message.media or "message")
+    return media.removeprefix("MessageMediaType.").lower()
+
+
 def response_label(response: object) -> str:
     if isinstance(response, str):
         return response
     if isinstance(response, dict) and response.get("kind") == "message":
-        return f"[{response.get('label', 'message')}]"
+        label = response.get("label", "message")
+        return label if response.get("has_preview") else f"[{label}]"
     return "[unsupported response]"
+
+
+async def display_response_label(client: Client, response: object) -> str:
+    if (
+        isinstance(response, dict)
+        and response.get("kind") == "message"
+        and response.get("label") == "text"
+        and not response.get("has_preview")
+    ):
+        try:
+            source = await client.get_messages(response["chat_id"], response["message_id"])
+            if source:
+                return message_label(source)
+        except (KeyError, RPCError):
+            pass
+    return response_label(response)
 
 
 async def send_response(client: Client, incoming: Message, response: object) -> None:
@@ -141,14 +167,67 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     )
 
 
+def saved_reply_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Add Another Reply", callback_data=f"mgr:add:{chat_id}"),
+                InlineKeyboardButton("View Replies", callback_data=f"mgr:list:{chat_id}"),
+            ],
+            [InlineKeyboardButton("Back to Manager", callback_data=f"mgr:open:{chat_id}")],
+        ]
+    )
+
+
+def global_manager_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Add Global Reply", callback_data="global:add"),
+                InlineKeyboardButton("View Global Replies", callback_data="global:list"),
+            ],
+            [InlineKeyboardButton("Clear Global Replies", callback_data="global:clear")],
+        ]
+    )
+
+
+def global_saved_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Add Another", callback_data="global:add"),
+                InlineKeyboardButton("View Global Replies", callback_data="global:list"),
+            ],
+            [InlineKeyboardButton("Back", callback_data="global:open")],
+        ]
+    )
+
+
+async def global_manager_content(repository: GroupRepository) -> tuple[str, InlineKeyboardMarkup]:
+    responses = await repository.get_global_responses()
+    return (
+        "Global Default Replies\n\n"
+        f"Replies: {len(responses)}\n\n"
+        "Used only when an enabled group has no group-specific replies.",
+        global_manager_keyboard(),
+    )
+
+
 async def manager_content(client: Client, repository: GroupRepository, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await client.get_chat(chat_id)
     document = await repository.get(chat_id)
+    local_count = len(document["responses"])
+    global_count = len(await repository.get_global_responses()) if local_count == 0 else 0
+    reply_status = (
+        f"{local_count}"
+        if local_count
+        else f"0 local, using {global_count} global default(s)"
+    )
     text = (
         "Auto Reply Manager\n\n"
         f"Group: {chat.title or chat_id}\n"
         f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
-        f"Replies: {len(document['responses'])}\n"
+        f"Replies: {reply_status}\n"
         f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
         f"Reaction chance: {document.get('reaction_chance', 25)}%"
     )
@@ -197,6 +276,14 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await message.reply_text(
             "Send /autoreply in the group you want to configure, then open the private manager button."
         )
+
+    @app.on_message(filters.private & filters.command("global_defaults"))
+    async def global_defaults_command(_: Client, message: Message) -> None:
+        if not message.from_user or message.from_user.id != settings.owner_id:
+            await message.reply_text("Only the bot owner can manage global default replies.")
+            return
+        text, keyboard = await global_manager_content(repository)
+        await message.reply_text(text, reply_markup=keyboard)
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
@@ -279,13 +366,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         elif action == "list":
             document = await repository.get(chat_id)
             responses = document["responses"]
+            labels = [await display_response_label(client, response) for response in responses]
             text = (
                 "No replies configured."
                 if not responses
                 else "Configured replies:\n"
                 + "\n".join(
-                    f"{index}. {response_label(response)}"
-                    for index, response in enumerate(responses, start=1)
+                    f"{index}. {label}" for index, label in enumerate(labels, start=1)
                 )
             )
             buttons = [
@@ -301,6 +388,49 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await query.message.edit_text(text, reply_markup=keyboard)
         await query.answer("Updated.")
 
+    @app.on_callback_query(filters.regex(r"^global:"))
+    async def global_callback(client: Client, query: CallbackQuery) -> None:
+        if not query.from_user or not query.message or query.from_user.id != settings.owner_id:
+            await query.answer("Only the bot owner can manage global replies.", show_alert=True)
+            return
+        action = query.data.split(":", 1)[1]
+        if action == "add":
+            await repository.set_global_capture(query.from_user.id)
+            await query.message.reply_text(
+                "Send any message now to save it as a global default reply.\n\nSend /cancel to stop."
+            )
+            await query.answer("Waiting for a global reply.")
+            return
+        if action == "clear":
+            await repository.clear_global_responses()
+        elif action.startswith("delete-"):
+            try:
+                index = int(action.removeprefix("delete-"))
+            except ValueError:
+                await query.answer("Invalid reply number.", show_alert=True)
+                return
+            await repository.remove_global_response(index)
+        elif action == "list":
+            responses = await repository.get_global_responses()
+            labels = [await display_response_label(client, response) for response in responses]
+            text = (
+                "No global default replies configured."
+                if not responses
+                else "Global default replies:\n"
+                + "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
+            )
+            buttons = [
+                [InlineKeyboardButton(f"Delete {index}", callback_data=f"global:delete-{index}")]
+                for index in range(1, min(len(responses), 20) + 1)
+            ]
+            buttons.append([InlineKeyboardButton("Back", callback_data="global:open")])
+            await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
+            await query.answer()
+            return
+        text, keyboard = await global_manager_content(repository)
+        await query.message.edit_text(text, reply_markup=keyboard)
+        await query.answer("Updated.")
+
     @app.on_message(filters.private & filters.command("cancel"))
     async def cancel_capture(_: Client, message: Message) -> None:
         if message.from_user:
@@ -310,17 +440,31 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     @app.on_message(
         filters.private
         & ~filters.command(
-            ["start", "help", "cancel", "updates", "support", "owner_link", "autoreply", "reaction"]
+            [
+                "start",
+                "help",
+                "cancel",
+                "updates",
+                "support",
+                "owner_link",
+                "autoreply",
+                "reaction",
+                "global_defaults",
+            ]
         ),
         group=1,
     )
     async def capture_private_message(client: Client, message: Message) -> None:
         if not message.from_user:
             return
+        global_capture = (
+            message.from_user.id == settings.owner_id
+            and await repository.is_global_capture(message.from_user.id)
+        )
         chat_id = await repository.get_capture_group(message.from_user.id)
-        if chat_id is None:
+        if chat_id is None and not global_capture:
             return
-        if not await user_is_group_admin(client, chat_id, message.from_user.id):
+        if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
             await repository.clear_capture_group(message.from_user.id)
             await message.reply_text("You are no longer an administrator of that group.")
             return
@@ -338,16 +482,32 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             "kind": "message",
             "chat_id": source.chat.id,
             "message_id": source.id,
-            "label": str(message.media or "text"),
+            "label": message_label(message),
+            "has_preview": bool(message.text or message.caption),
         }
-        result = await repository.add_response(chat_id, response)
+        result = (
+            await repository.add_global_response(response)
+            if global_capture
+            else await repository.add_response(chat_id, response)
+        )
         await repository.clear_capture_group(message.from_user.id)
         replies = {
-            "added": "Reply saved. Open the manager again from /autoreply in the group to make more changes.",
+            "added": "Reply saved.",
             "duplicate": "That reply is already configured.",
             "full": f"This group already has the maximum of {MAX_RESPONSES} replies.",
         }
-        await message.reply_text(replies[result])
+        if global_capture:
+            replies["added"] = "Global default reply saved."
+        await message.reply_text(
+            replies[result],
+            reply_markup=(
+                global_saved_keyboard()
+                if global_capture and result == "added"
+                else saved_reply_keyboard(chat_id)
+                if result == "added"
+                else None
+            ),
+        )
 
     async def eligible_message(_, __, message: Message) -> bool:
         return bool(

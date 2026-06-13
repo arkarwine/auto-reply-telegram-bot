@@ -62,6 +62,11 @@ The owner can configure the `/start` and `/help` buttons in private chat:
 Calling one without a URL displays its current value. Links are persisted in
 MongoDB.
 
+The owner can open `/global_defaults` in private chat to manage global fallback
+replies. These are used only when an enabled group has no group-specific
+replies. Local group replies always take priority. Group administrators cannot
+view or change global defaults.
+
 ## Private configuration
 
 A group administrator sends `/autoreply` in the group. The bot replies with an

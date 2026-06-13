@@ -121,8 +121,71 @@ class GroupRepository:
             return_document=ReturnDocument.BEFORE,
         )
         if not document:
-            return None
+            group = await self.collection.find_one({"_id": chat_id}, {"enabled": 1})
+            if not group or not group.get("enabled"):
+                return None
+            return await self.next_global_response()
 
+        responses = document["responses"]
+        return responses[document.get("next_index", 0) % len(responses)]
+
+    async def get_global_responses(self) -> list[Any]:
+        document = await self.settings_collection.find_one({"_id": "global_responses"})
+        return document.get("responses", []) if document else []
+
+    async def add_global_response(self, response: Any) -> str:
+        responses = await self.get_global_responses()
+        if response in responses:
+            return "duplicate"
+        if len(responses) >= MAX_RESPONSES:
+            return "full"
+        await self.settings_collection.update_one(
+            {"_id": "global_responses"},
+            {"$push": {"responses": response}, "$setOnInsert": {"next_index": 0}},
+            upsert=True,
+        )
+        return "added"
+
+    async def remove_global_response(self, one_based_index: int) -> Any | None:
+        responses = await self.get_global_responses()
+        if one_based_index < 1 or one_based_index > len(responses):
+            return None
+        removed = responses.pop(one_based_index - 1)
+        await self.settings_collection.update_one(
+            {"_id": "global_responses"},
+            {"$set": {"responses": responses, "next_index": 0}},
+            upsert=True,
+        )
+        return removed
+
+    async def clear_global_responses(self) -> int:
+        responses = await self.get_global_responses()
+        await self.settings_collection.update_one(
+            {"_id": "global_responses"},
+            {"$set": {"responses": [], "next_index": 0}},
+            upsert=True,
+        )
+        return len(responses)
+
+    async def next_global_response(self) -> Any | None:
+        document = await self.settings_collection.find_one_and_update(
+            {"_id": "global_responses", "responses.0": {"$exists": True}},
+            [
+                {
+                    "$set": {
+                        "next_index": {
+                            "$mod": [
+                                {"$add": [{"$ifNull": ["$next_index", 0]}, 1]},
+                                {"$size": "$responses"},
+                            ]
+                        }
+                    }
+                }
+            ],
+            return_document=ReturnDocument.BEFORE,
+        )
+        if not document:
+            return None
         responses = document["responses"]
         return responses[document.get("next_index", 0) % len(responses)]
 
@@ -219,9 +282,20 @@ class GroupRepository:
     async def set_capture_group(self, user_id: int, chat_id: int) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},
-            {"$set": {"capture_chat_id": chat_id}},
+            {"$set": {"capture_chat_id": chat_id}, "$unset": {"capture_global": ""}},
             upsert=True,
         )
+
+    async def set_global_capture(self, user_id: int) -> None:
+        await self.states_collection.update_one(
+            {"_id": user_id},
+            {"$set": {"capture_global": True}, "$unset": {"capture_chat_id": ""}},
+            upsert=True,
+        )
+
+    async def is_global_capture(self, user_id: int) -> bool:
+        document = await self.states_collection.find_one({"_id": user_id})
+        return bool(document and document.get("capture_global"))
 
     async def get_capture_group(self, user_id: int) -> int | None:
         document = await self.states_collection.find_one({"_id": user_id})

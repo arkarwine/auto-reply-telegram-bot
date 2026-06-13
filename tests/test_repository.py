@@ -24,10 +24,34 @@ class FakeCollection:
         )
         return previous
 
+    async def find_one(self, query, projection=None):
+        if self.document and self.document["_id"] == query["_id"]:
+            return deepcopy(self.document)
+        return None
 
-def repository_with(document) -> GroupRepository:
+
+class FakeSettingsCollection:
+    def __init__(self, responses=None):
+        self.document = {
+            "_id": "global_responses",
+            "responses": responses or [],
+            "next_index": 0,
+        }
+
+    async def find_one_and_update(self, query, update, return_document):
+        if not self.document["responses"]:
+            return None
+        previous = deepcopy(self.document)
+        self.document["next_index"] = (self.document["next_index"] + 1) % len(
+            self.document["responses"]
+        )
+        return previous
+
+
+def repository_with(document, global_responses=None) -> GroupRepository:
     repository = GroupRepository.__new__(GroupRepository)
     repository.collection = FakeCollection(document)
+    repository.settings_collection = FakeSettingsCollection(global_responses)
     return repository
 
 
@@ -64,3 +88,24 @@ async def test_next_response_returns_none_when_empty() -> None:
     )
 
     assert await repository.next_response(123) is None
+
+
+@pytest.mark.asyncio
+async def test_next_response_uses_global_defaults_when_group_has_none() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": True, "responses": [], "next_index": 0},
+        global_responses=["global one", "global two"],
+    )
+
+    assert await repository.next_response(123) == "global one"
+    assert await repository.next_response(123) == "global two"
+
+
+@pytest.mark.asyncio
+async def test_group_responses_take_priority_over_global_defaults() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0},
+        global_responses=["global"],
+    )
+
+    assert await repository.next_response(123) == "local"
