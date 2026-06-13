@@ -6,8 +6,10 @@ from pyrogram.enums import ButtonStyle, ChatMemberStatus, ParseMode
 from pyrogram.errors import FloodWait
 
 from autoreply.bot import (
-    BOT_MENU_COMMANDS,
     HELP_TEXT,
+    PUBLIC_BOT_COMMANDS,
+    SUDOER_BOT_COMMANDS,
+    SUDOER_HELP_TEXT,
     START_TEXT,
     chance_succeeds,
     choose_reaction,
@@ -21,6 +23,7 @@ from autoreply.bot import (
     manager_keyboard,
     message_label,
     response_label,
+    register_bot_commands,
     retry_flood_wait,
     saved_reply_keyboard,
     send_response,
@@ -121,8 +124,13 @@ async def test_flood_wait_is_retried() -> None:
     assert attempts == 2
 
 
-def test_bot_menu_contains_registered_commands() -> None:
-    assert {command.command for command in BOT_MENU_COMMANDS} == {
+def test_public_bot_menu_hides_sudoer_commands() -> None:
+    assert {command.command for command in PUBLIC_BOT_COMMANDS} == {
+        "start",
+        "help",
+        "autoreply",
+    }
+    assert {command.command for command in SUDOER_BOT_COMMANDS} == {
         "start",
         "help",
         "autoreply",
@@ -134,6 +142,34 @@ def test_bot_menu_contains_registered_commands() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_bot_commands_are_registered_for_each_sudoer() -> None:
+    class FakeApp:
+        def __init__(self):
+            self.calls = []
+
+        async def set_bot_commands(self, commands, scope):
+            self.calls.append((commands, scope))
+
+    app = FakeApp()
+    settings = Settings(
+        api_id=123,
+        api_hash="hash",
+        bot_token="token",
+        mongodb_uri="mongodb://localhost",
+        mongodb_database="telegram_autoreply",
+        owner_id=1,
+        sudoer_ids=(2, 3),
+        storage_chat_id=None,
+    )
+
+    await register_bot_commands(app, settings)
+
+    assert [getattr(scope, "chat_id", None) for _, scope in app.calls] == [None, 1, 2, 3]
+    assert app.calls[0][0] == PUBLIC_BOT_COMMANDS
+    assert all(commands == SUDOER_BOT_COMMANDS for commands, _ in app.calls[1:])
+
+
 def test_disabled_parse_mode_preserves_angle_brackets() -> None:
     assert ParseMode.DISABLED.value == "disabled"
 
@@ -141,7 +177,8 @@ def test_disabled_parse_mode_preserves_angle_brackets() -> None:
 def test_start_text_contains_setup_steps() -> None:
     assert "/autoreply" in START_TEXT
     assert "✨ Auto Reply" in START_TEXT
-    assert "/global_defaults" in HELP_TEXT
+    assert "/global_defaults" not in HELP_TEXT
+    assert "/global_defaults" in SUDOER_HELP_TEXT
 
 
 def test_response_label_preserves_existing_text_responses() -> None:
@@ -209,19 +246,23 @@ def test_link_keyboard_uses_configured_links() -> None:
             "updates": "https://t.me/updates",
             "support": "https://t.me/support",
             "owner_link": "https://t.me/owner",
-        }
+        },
+        "example_bot",
     )
 
     assert keyboard is not None
     assert [button.url for row in keyboard.inline_keyboard for button in row if button.url] == [
+        "https://t.me/example_bot?startgroup=true",
         "https://t.me/updates",
         "https://t.me/support",
         "https://t.me/owner",
     ]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["❓ Help", "📢 Updates"],
-        ["💬 Support", "👤 Owner"],
+        ["➕ Add to Group", "❓ Help"],
+        ["📢 Updates", "💬 Support"],
+        ["👤 Owner"],
     ]
+    assert keyboard.inline_keyboard[0][0].url == "https://t.me/example_bot?startgroup=true"
 
 
 def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:

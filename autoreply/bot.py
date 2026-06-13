@@ -11,6 +11,8 @@ from pyrogram.enums import ButtonStyle, ChatMemberStatus, ChatType, ParseMode
 from pyrogram.errors import ChatAdminRequired, FloodWait, Forbidden, RPCError, ReactionInvalid
 from pyrogram.types import (
     BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -36,10 +38,13 @@ COMMANDS = [
     "autoreply",
     "reaction",
 ]
-BOT_MENU_COMMANDS = [
+PUBLIC_BOT_COMMANDS = [
     BotCommand("start", "🚀 Open the bot"),
     BotCommand("help", "❓ Quick help"),
     BotCommand("autoreply", "⚙️ Manage a group"),
+]
+SUDOER_BOT_COMMANDS = [
+    *PUBLIC_BOT_COMMANDS,
     BotCommand("updates", "📢 Set updates link"),
     BotCommand("support", "💬 Set support link"),
     BotCommand("owner_link", "👤 Set owner link"),
@@ -58,7 +63,10 @@ HELP_TEXT = (
     "1️⃣ Add me as a group admin\n"
     "2️⃣ Disable privacy mode in BotFather\n"
     "3️⃣ Send /autoreply in the group\n"
-    "4️⃣ Add replies in the private manager\n\n"
+    "4️⃣ Add replies in the private manager"
+)
+SUDOER_HELP_TEXT = (
+    f"{HELP_TEXT}\n\n"
     "🌐 /global_defaults — global replies\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
@@ -120,8 +128,17 @@ async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2)
     raise RuntimeError("unreachable")
 
 
-def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
-    buttons = [InlineKeyboardButton("❓ Help", callback_data="start:help", style=ButtonStyle.PRIMARY)]
+def link_keyboard(links: dict[str, str], username: str | None = None) -> InlineKeyboardMarkup:
+    buttons = []
+    if username:
+        buttons.append(
+            InlineKeyboardButton(
+                "➕ Add to Group",
+                url=f"https://t.me/{username}?startgroup=true",
+                style=ButtonStyle.SUCCESS,
+            )
+        )
+    buttons.append(InlineKeyboardButton("❓ Help", callback_data="start:help", style=ButtonStyle.PRIMARY))
     if links.get("updates"):
         buttons.append(
             InlineKeyboardButton("📢 Updates", url=links["updates"], style=ButtonStyle.PRIMARY)
@@ -133,6 +150,12 @@ def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
     if links.get("owner_link"):
         buttons.append(InlineKeyboardButton("👤 Owner", url=links["owner_link"]))
     return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
+
+
+async def register_bot_commands(app: Client, settings: Settings) -> None:
+    await app.set_bot_commands(PUBLIC_BOT_COMMANDS, scope=BotCommandScopeDefault())
+    for user_id in dict.fromkeys((settings.owner_id, *settings.sudoer_ids)):
+        await app.set_bot_commands(SUDOER_BOT_COMMANDS, scope=BotCommandScopeChat(user_id))
 
 
 def valid_link(value: str) -> bool:
@@ -475,9 +498,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await open_manager(client, repository, message, chat_id)
             return
         links = await repository.get_links()
-        keyboard = link_keyboard(links)
+        me = await client.get_me()
+        keyboard = link_keyboard(links, me.username)
         if message.command and message.command[0].lower() == "help":
-            await message.reply_text(HELP_TEXT, reply_markup=keyboard)
+            help_text = SUDOER_HELP_TEXT if is_sudoer(settings, message) else HELP_TEXT
+            await message.reply_text(help_text, reply_markup=keyboard)
             return
         start_image = await repository.get_start_image()
         if start_image:
@@ -492,7 +517,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def start_help_callback(_: Client, query: CallbackQuery) -> None:
         if not query.message:
             return
-        await query.message.reply_text(HELP_TEXT)
+        help_text = SUDOER_HELP_TEXT if query_is_sudoer(settings, query) else HELP_TEXT
+        await query.message.reply_text(help_text)
         await query.answer()
 
     @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
@@ -998,7 +1024,7 @@ async def start() -> None:
 
     try:
         await app.start()
-        await app.set_bot_commands(BOT_MENU_COMMANDS)
+        await register_bot_commands(app, settings)
         LOGGER.info("Interaction bot started and command menu registered")
         await idle()
     finally:

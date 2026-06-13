@@ -125,7 +125,9 @@ open the private manager. Use **Add Reply**, then send text, a photo, video,
 sticker, document, voice note, poll, or another copyable Telegram message.
 The bot registers its command menu during startup and responds to `/start` or
 `/help` in private chat with setup instructions. `/start` always includes a
-Help button; updates, support, and owner buttons are shown only when configured.
+Help button and an **Add to Group** button; updates, support, and owner buttons
+are shown only when configured. Sudoer commands are hidden from the public
+command menu and registered only in each owner/sudoer's private chat.
 
 ## Tests
 
