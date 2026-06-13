@@ -72,7 +72,8 @@ SUDOER_HELP_TEXT = (
     "🔗 /updates, /support, /owner_link — menu links"
 )
 MANAGER_DELETE_DELAY = 30
-REPLIES_PER_PAGE = 5
+REPLIES_PER_PAGE = 10
+REPLY_LABEL_LIMIT = 42
 COOLDOWN_OPTIONS = [0, 5, 15, 30, 60]
 RATE_LIMIT_OPTIONS = [0, 5, 10, 20, 30]
 _last_interaction: dict[int, float] = {}
@@ -192,6 +193,21 @@ def response_label(response: object) -> str:
     return "[unsupported response]"
 
 
+def truncate_label(label: str, limit: int = REPLY_LABEL_LIMIT) -> str:
+    label = " ".join(label.split())
+    return label if len(label) <= limit else label[: limit - 3] + "..."
+
+
+def callback_index_page(action: str, prefix: str) -> tuple[int, int]:
+    values = action.removeprefix(prefix).split("-", 1)
+    return int(values[0]), int(values[1]) if len(values) == 2 else 0
+
+
+async def response_preview_text(client: Client, response: object, title: str) -> str:
+    label = await display_response_label(client, response)
+    return f"👁 {title}\n\n{label[:3900]}"
+
+
 async def display_response_label(client: Client, response: object) -> str:
     if (
         isinstance(response, dict)
@@ -206,6 +222,117 @@ async def display_response_label(client: Client, response: object) -> str:
         except (KeyError, RPCError):
             pass
     return response_label(response)
+
+
+async def reply_list_content(
+    client: Client,
+    repository: GroupRepository,
+    chat_id: int,
+    page: int,
+) -> tuple[str, InlineKeyboardMarkup]:
+    document = await repository.get(chat_id)
+    local_responses = document["responses"]
+    global_responses = await repository.get_global_responses()
+    combined = [("local", index, response) for index, response in enumerate(local_responses, 1)]
+    combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
+    page_count = max(1, (len(combined) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
+    page = max(0, min(page, page_count - 1))
+    page_items = combined[page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE]
+    excluded = document.get("excluded_global_responses", [])
+    lines = []
+    buttons = []
+    for source, index, response in page_items:
+        label = truncate_label(await display_response_label(client, response))
+        if source == "local":
+            lines.append(f"L{index}. {label}")
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"👁 L{index}", callback_data=f"mgr:preview-l-{index}-{page}:{chat_id}"
+                    ),
+                    InlineKeyboardButton(
+                        f"🗑 L{index}",
+                        callback_data=f"mgr:delete-{index}-{page}:{chat_id}",
+                        style=ButtonStyle.DANGER,
+                    ),
+                ]
+            )
+        else:
+            is_excluded = response in excluded
+            lines.append(f"G{index}. {label}{' (excluded)' if is_excluded else ''}")
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"👁 G{index}", callback_data=f"mgr:preview-g-{index}-{page}:{chat_id}"
+                    ),
+                    InlineKeyboardButton(
+                        f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
+                        callback_data=f"mgr:exclude-{index}-{page}:{chat_id}",
+                        style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
+                    ),
+                ]
+            )
+    text = (
+        f"📚 Replies • {page + 1}/{page_count}\n\n" + "\n".join(lines)
+        if lines
+        else "📭 No replies yet."
+    )
+    navigation = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"mgr:list-{page - 1}:{chat_id}"))
+    if page + 1 < page_count:
+        navigation.append(InlineKeyboardButton("Next ➡️", callback_data=f"mgr:list-{page + 1}:{chat_id}"))
+    if navigation:
+        buttons.append(navigation)
+    buttons.append(
+        [InlineKeyboardButton("⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY)]
+    )
+    return text[:4096], InlineKeyboardMarkup(buttons)
+
+
+async def global_reply_list_content(
+    client: Client,
+    repository: GroupRepository,
+    page: int,
+) -> tuple[str, InlineKeyboardMarkup]:
+    responses = await repository.get_global_responses()
+    page_count = max(1, (len(responses) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
+    page = max(0, min(page, page_count - 1))
+    page_items = list(enumerate(responses, 1))[
+        page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE
+    ]
+    labels = [
+        (index, truncate_label(await display_response_label(client, response)))
+        for index, response in page_items
+    ]
+    text = (
+        "📭 No global replies yet."
+        if not responses
+        else f"🌐 Global Replies • {page + 1}/{page_count}\n\n"
+        + "\n".join(f"{index}. {label}" for index, label in labels)
+    )
+    buttons = [
+        [
+            InlineKeyboardButton(f"👁 {index}", callback_data=f"global:preview-{index}-{page}"),
+            InlineKeyboardButton(
+                f"🗑 {index}",
+                callback_data=f"global:delete-{index}-{page}",
+                style=ButtonStyle.DANGER,
+            ),
+        ]
+        for index, _ in page_items
+    ]
+    navigation = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"global:list-{page - 1}"))
+    if page + 1 < page_count:
+        navigation.append(InlineKeyboardButton("Next ➡️", callback_data=f"global:list-{page + 1}"))
+    if navigation:
+        buttons.append(navigation)
+    buttons.append(
+        [InlineKeyboardButton("⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY)]
+    )
+    return text[:4096], InlineKeyboardMarkup(buttons)
 
 
 async def send_response(client: Client, incoming: Message, response: object) -> None:
@@ -689,86 +816,74 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         elif action == "clear":
             await repository.clear_responses(chat_id)
+        elif action.startswith("preview-"):
+            try:
+                source, raw_index, raw_page = action.removeprefix("preview-").split("-", 2)
+                index = int(raw_index)
+                page = int(raw_page)
+                responses = (
+                    (await repository.get(chat_id))["responses"]
+                    if source == "l"
+                    else await repository.get_global_responses()
+                )
+                response = responses[index - 1]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Reply not found.", show_alert=True)
+                return
+            text = await response_preview_text(client, response, f"{source.upper()}{index}")
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Replies",
+                            callback_data=f"mgr:list-{page}:{chat_id}",
+                            style=ButtonStyle.PRIMARY,
+                        ),
+                        InlineKeyboardButton(
+                            "🗑 Delete" if source == "l" else "🚫 Exclude",
+                            callback_data=(
+                                f"mgr:delete-{index}-{page}:{chat_id}"
+                                if source == "l"
+                                else f"mgr:exclude-{index}-{page}:{chat_id}"
+                            ),
+                            style=ButtonStyle.DANGER,
+                        ),
+                    ]
+                ]
+            )
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer()
+            return
         elif action.startswith("exclude-"):
             try:
-                index = int(action.removeprefix("exclude-"))
+                index, page = callback_index_page(action, "exclude-")
                 response = (await repository.get_global_responses())[index - 1]
             except (ValueError, IndexError):
                 await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
             await repository.toggle_global_exclusion(chat_id, response)
+            text, keyboard = await reply_list_content(client, repository, chat_id, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("✅ Updated")
+            return
         elif action.startswith("delete-"):
             try:
-                index = int(action.removeprefix("delete-"))
+                index, page = callback_index_page(action, "delete-")
             except ValueError:
                 await query.answer("⚠️ Invalid reply.", show_alert=True)
                 return
             await repository.remove_response(chat_id, index)
+            text, keyboard = await reply_list_content(client, repository, chat_id, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
+            return
         elif action.startswith("list"):
             try:
                 page = int(action.split("-", 1)[1]) if "-" in action else 0
             except ValueError:
                 page = 0
-            document = await repository.get(chat_id)
-            local_responses = document["responses"]
-            global_responses = await repository.get_global_responses()
-            combined = [("local", index, response) for index, response in enumerate(local_responses, 1)]
-            combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
-            page_count = max(1, (len(combined) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
-            page = max(0, min(page, page_count - 1))
-            page_items = combined[page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE]
-            excluded = document.get("excluded_global_responses", [])
-            lines = []
-            buttons = []
-            for source, index, response in page_items:
-                label = await display_response_label(client, response)
-                if source == "local":
-                    lines.append(f"L{index}. {label}")
-                    buttons.append(
-                        [
-                            InlineKeyboardButton(
-                                f"🗑 L{index}",
-                                callback_data=f"mgr:delete-{index}:{chat_id}",
-                                style=ButtonStyle.DANGER,
-                            )
-                        ]
-                    )
-                else:
-                    is_excluded = response in excluded
-                    lines.append(f"G{index}. {label}{' (excluded)' if is_excluded else ''}")
-                    buttons.append(
-                        [
-                            InlineKeyboardButton(
-                                f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
-                                callback_data=f"mgr:exclude-{index}:{chat_id}",
-                                style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
-                            )
-                        ]
-                    )
-            text = (
-                f"📚 Replies • {page + 1}/{page_count}\n\n" + "\n".join(lines)
-                if lines
-                else "📭 No replies yet."
-            )
-            navigation = []
-            if page > 0:
-                navigation.append(
-                    InlineKeyboardButton("⬅️ Prev", callback_data=f"mgr:list-{page - 1}:{chat_id}")
-                )
-            if page + 1 < page_count:
-                navigation.append(
-                    InlineKeyboardButton("Next ➡️", callback_data=f"mgr:list-{page + 1}:{chat_id}")
-                )
-            if navigation:
-                buttons.append(navigation)
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.PRIMARY
-                    )
-                ]
-            )
-            await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
+            text, keyboard = await reply_list_content(client, repository, chat_id, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer()
             return
 
@@ -811,63 +926,51 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             )
             await query.answer()
             return
+        elif action.startswith("preview-"):
+            try:
+                index, page = callback_index_page(action, "preview-")
+                response = (await repository.get_global_responses())[index - 1]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Reply not found.", show_alert=True)
+                return
+            text = await response_preview_text(client, response, f"Global Reply {index}")
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Replies",
+                            callback_data=f"global:list-{page}",
+                            style=ButtonStyle.PRIMARY,
+                        ),
+                        InlineKeyboardButton(
+                            "🗑 Delete",
+                            callback_data=f"global:delete-{index}-{page}",
+                            style=ButtonStyle.DANGER,
+                        ),
+                    ]
+                ]
+            )
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer()
+            return
         elif action.startswith("delete-"):
             try:
-                index = int(action.removeprefix("delete-"))
+                index, page = callback_index_page(action, "delete-")
             except ValueError:
                 await query.answer("⚠️ Invalid reply.", show_alert=True)
                 return
             await repository.remove_global_response(index)
+            text, keyboard = await global_reply_list_content(client, repository, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
+            return
         elif action.startswith("list"):
             try:
                 page = int(action.split("-", 1)[1]) if "-" in action else 0
             except ValueError:
                 page = 0
-            responses = await repository.get_global_responses()
-            page_count = max(1, (len(responses) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
-            page = max(0, min(page, page_count - 1))
-            page_items = list(enumerate(responses, 1))[
-                page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE
-            ]
-            labels = [
-                (index, await display_response_label(client, response))
-                for index, response in page_items
-            ]
-            text = (
-                "📭 No global replies yet."
-                if not responses
-                else f"🌐 Global Replies • {page + 1}/{page_count}\n\n"
-                + "\n".join(f"{index}. {label}" for index, label in labels)
-            )
-            buttons = [
-                [
-                    InlineKeyboardButton(
-                        f"🗑 {index}",
-                        callback_data=f"global:delete-{index}",
-                        style=ButtonStyle.DANGER,
-                    )
-                ]
-                for index, _ in page_items
-            ]
-            navigation = []
-            if page > 0:
-                navigation.append(
-                    InlineKeyboardButton("⬅️ Prev", callback_data=f"global:list-{page - 1}")
-                )
-            if page + 1 < page_count:
-                navigation.append(
-                    InlineKeyboardButton("Next ➡️", callback_data=f"global:list-{page + 1}")
-                )
-            if navigation:
-                buttons.append(navigation)
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Manager", callback_data="global:open", style=ButtonStyle.PRIMARY
-                    )
-                ]
-            )
-            await query.message.reply_text(text[:4096], reply_markup=InlineKeyboardMarkup(buttons))
+            text, keyboard = await global_reply_list_content(client, repository, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer()
             return
         text, keyboard = await global_manager_content(repository)

@@ -16,6 +16,7 @@ from autoreply.bot import (
     command_argument,
     display_response_label,
     global_manager_keyboard,
+    global_reply_list_content,
     group_onboarding_content,
     interaction_allowed,
     is_sudoer,
@@ -23,11 +24,14 @@ from autoreply.bot import (
     manager_keyboard,
     message_label,
     response_label,
+    response_preview_text,
+    reply_list_content,
     register_bot_commands,
     retry_flood_wait,
     saved_reply_keyboard,
     send_response,
     start_image_file_id,
+    truncate_label,
     next_option,
     valid_link,
 )
@@ -183,6 +187,53 @@ def test_start_text_contains_setup_steps() -> None:
 
 def test_response_label_preserves_existing_text_responses() -> None:
     assert response_label("hello") == "hello"
+
+
+def test_reply_labels_are_truncated() -> None:
+    assert truncate_label("short") == "short"
+    assert truncate_label("x" * 50, limit=10) == "xxxxxxx..."
+
+
+@pytest.mark.asyncio
+async def test_reply_list_shows_ten_truncated_items_with_preview_actions() -> None:
+    class FakeRepository:
+        async def get(self, chat_id):
+            return {
+                "responses": [f"local reply {index} " + "x" * 50 for index in range(1, 12)],
+                "excluded_global_responses": [],
+            }
+
+        async def get_global_responses(self):
+            return []
+
+    text, keyboard = await reply_list_content(SimpleNamespace(), FakeRepository(), -100123, 0)
+
+    assert "local reply 10" in text
+    assert "local reply 11" not in text
+    assert "..." in text
+    assert len(keyboard.inline_keyboard) == 12
+    assert [button.text for button in keyboard.inline_keyboard[0]] == ["👁 L1", "🗑 L1"]
+    assert keyboard.inline_keyboard[0][0].callback_data == "mgr:preview-l-1-0:-100123"
+    assert keyboard.inline_keyboard[0][1].callback_data == "mgr:delete-1-0:-100123"
+
+
+@pytest.mark.asyncio
+async def test_global_reply_list_has_preview_next_to_delete() -> None:
+    class FakeRepository:
+        async def get_global_responses(self):
+            return ["one", "two"]
+
+    _, keyboard = await global_reply_list_content(SimpleNamespace(), FakeRepository(), 0)
+
+    assert [button.text for button in keyboard.inline_keyboard[0]] == ["👁 1", "🗑 1"]
+    assert keyboard.inline_keyboard[0][0].callback_data == "global:preview-1-0"
+
+
+@pytest.mark.asyncio
+async def test_response_preview_text_is_suitable_for_in_place_menu() -> None:
+    text = await response_preview_text(SimpleNamespace(), "full reply text", "L1")
+
+    assert text == "👁 L1\n\nfull reply text"
 
 
 def test_message_label_uses_text_preview() -> None:

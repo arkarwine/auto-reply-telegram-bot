@@ -102,8 +102,9 @@ The private manager lets admins:
 - Exclude individual global replies from the group.
 
 Replies are selected randomly from the group's local replies and its allowed
-global replies. Reply lists are paginated. Clearing local or global replies
-requires confirmation.
+global replies. Reply lists show 10 truncated entries per page and stay in one
+editable menu while previewing, deleting, excluding, or changing pages.
+Clearing local or global replies requires confirmation.
 
 Telegram flood waits are retried automatically. If Telegram reports that the
 bot can no longer access or interact with a group, interactions for that group
