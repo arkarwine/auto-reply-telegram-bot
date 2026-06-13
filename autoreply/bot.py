@@ -8,11 +8,23 @@ from typing import TypeVar
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ButtonStyle, ChatMemberStatus, ChatType, ParseMode
-from pyrogram.errors import ChatAdminRequired, FloodWait, Forbidden, RPCError
-from pyrogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.errors import ChatAdminRequired, FloodWait, Forbidden, RPCError, ReactionInvalid
+from pyrogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyParameters,
+)
 
 from autoreply.config import Settings
-from autoreply.repository import GroupRepository, MAX_RESPONSES
+from autoreply.repository import (
+    DEFAULT_COOLDOWN_SECONDS,
+    DEFAULT_RATE_LIMIT_PER_MINUTE,
+    GroupRepository,
+    MAX_RESPONSES,
+)
 
 
 logging.basicConfig(
@@ -36,13 +48,28 @@ BOT_MENU_COMMANDS = [
 ]
 START_TEXT = (
     "Telegram Group Interaction Bot\n\n"
-    "I can keep group chats active with rotating automatic replies and occasional random reactions.\n\n"
+    "I can keep group chats active with random automatic replies and occasional random reactions.\n\n"
     "Quick setup:\n"
     "1. Add me to your group as an administrator.\n"
     "2. Disable privacy mode through BotFather so I can see group messages.\n"
     "3. Send /autoreply in the group.\n"
-    "4. Open the private manager to add replies and enable interactions.\n\n"
+    "4. Open the private manager to add replies and tune interactions.\n\n"
     "All configuration happens privately, keeping the group clean."
+)
+HELP_TEXT = (
+    "Auto Reply Help\n\n"
+    "Group setup:\n"
+    "- Add me to a group as an administrator.\n"
+    "- In BotFather, disable privacy mode so I can see normal group messages.\n"
+    "- Send /autoreply in the group and open the private manager.\n\n"
+    "Manager controls:\n"
+    "- Add any copyable Telegram message as a reply.\n"
+    "- Set reply chance, reaction chance, cooldown, and per-minute rate limit.\n"
+    "- Include or exclude global default replies per group.\n\n"
+    "Owner controls:\n"
+    "- /global_defaults manages global default replies.\n"
+    "- /updates, /support, and /owner_link configure start-menu buttons.\n"
+    "- /start_img configures the start-menu image."
 )
 MANAGER_DELETE_DELAY = 30
 REPLIES_PER_PAGE = 5
@@ -59,6 +86,7 @@ def command_argument(message: Message) -> str:
 
 
 def choose_reaction(chance: int, reactions: list[str]) -> str | None:
+    reactions = [reaction.strip() for reaction in reactions if reaction and reaction.strip()]
     if not reactions or random.randint(1, 100) > chance:
         return None
     return random.choice(reactions)
@@ -101,7 +129,9 @@ async def retry_flood_wait(action: Callable[[], Awaitable[T]], retries: int = 2)
 
 
 def link_keyboard(links: dict[str, str]) -> InlineKeyboardMarkup | None:
-    buttons = []
+    buttons = [
+        InlineKeyboardButton("Help", callback_data="start:help", style=ButtonStyle.PRIMARY)
+    ]
     if links.get("updates"):
         buttons.append(
             InlineKeyboardButton("Updates Channel", url=links["updates"], style=ButtonStyle.PRIMARY)
@@ -158,15 +188,20 @@ async def display_response_label(client: Client, response: object) -> str:
 
 
 async def send_response(client: Client, incoming: Message, response: object) -> None:
+    reply_parameters = ReplyParameters(message_id=incoming.id)
     if isinstance(response, str):
-        await incoming.reply_text(response)
+        await client.send_message(
+            chat_id=incoming.chat.id,
+            text=response,
+            reply_parameters=reply_parameters,
+        )
         return
     if isinstance(response, dict) and response.get("kind") == "message":
         await client.copy_message(
             chat_id=incoming.chat.id,
             from_chat_id=response["chat_id"],
             message_id=response["message_id"],
-            reply_to_message_id=incoming.id,
+            reply_parameters=reply_parameters,
         )
         return
     raise ValueError("Unsupported stored response")
@@ -239,11 +274,11 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    f"Cooldown: {document.get('cooldown_seconds', 5)}s",
+                    f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
                     callback_data=f"mgr:cooldown:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    f"Rate: {document.get('rate_limit_per_minute', 10) or 'Unlimited'}/min",
+                    f"Rate: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or 'Unlimited'}/min",
                     callback_data=f"mgr:rate:{chat_id}",
                 ),
             ],
@@ -359,8 +394,8 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
         f"Interactions: {'enabled' if document['enabled'] else 'disabled'}\n"
         f"Replies: {local_count} local + {global_count} global\n"
         f"Reply chance: {document.get('reply_chance', 100)}%\n"
-        f"Cooldown: {document.get('cooldown_seconds', 5)} seconds\n"
-        f"Rate limit: {document.get('rate_limit_per_minute', 10) or 'unlimited'}/minute\n"
+        f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)} seconds\n"
+        f"Rate limit: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or 'unlimited'}/minute\n"
         f"Global replies: {'enabled' if document.get('global_replies_enabled', True) else 'disabled'}\n"
         f"Reactions: {'enabled' if document.get('reactions_enabled', True) else 'disabled'}\n"
         f"Reaction chance: {document.get('reaction_chance', 25)}%"
@@ -390,6 +425,60 @@ async def require_admin(client: Client, message: Message) -> bool:
     return allowed
 
 
+async def group_onboarding_content(
+    client: Client,
+    repository: GroupRepository,
+    message: Message,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    me = await client.get_me()
+    await repository.set_enabled(message.chat.id, True)
+
+    try:
+        bot_member = await client.get_chat_member(message.chat.id, me.id)
+        is_admin = bot_member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}
+    except RPCError as exc:
+        LOGGER.warning("Could not inspect bot permissions in chat %s: %s", message.chat.id, exc)
+        is_admin = False
+
+    admin_line = (
+        "Admin access: OK"
+        if is_admin
+        else "Admin access: missing. Promote me to administrator so I can reply reliably."
+    )
+    text = (
+        "Thanks for adding me.\n\n"
+        "Requirement check:\n"
+        f"- {admin_line}\n"
+        "- Send messages: OK, because this notice was delivered.\n"
+        "- Privacy mode: please confirm it is disabled in BotFather so I can see normal group messages.\n\n"
+        "Auto-reply is enabled by default. Add at least one local reply, or configure global defaults, "
+        "and I will start responding according to this group's chance, cooldown, and rate-limit settings."
+    )
+    if not me.username:
+        return text, None
+    return (
+        text,
+        InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Open Auto Reply Manager",
+                        url=f"https://t.me/{me.username}?start=configure_{message.chat.id}",
+                        style=ButtonStyle.PRIMARY,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "Help",
+                        callback_data="start:help",
+                        style=ButtonStyle.PRIMARY,
+                    )
+                ],
+            ]
+        ),
+    )
+
+
 def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
     @app.on_message(filters.private & filters.command(["start", "help"]))
     async def private_help(client: Client, message: Message) -> None:
@@ -404,6 +493,9 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         links = await repository.get_links()
         keyboard = link_keyboard(links)
+        if message.command and message.command[0].lower() == "help":
+            await message.reply_text(HELP_TEXT, reply_markup=keyboard)
+            return
         start_image = await repository.get_start_image()
         if start_image:
             try:
@@ -412,6 +504,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             except RPCError:
                 LOGGER.exception("Could not send configured start image")
         await message.reply_text(START_TEXT, reply_markup=keyboard)
+
+    @app.on_callback_query(filters.regex(r"^start:help$"))
+    async def start_help_callback(_: Client, query: CallbackQuery) -> None:
+        if not query.message:
+            return
+        await query.message.reply_text(HELP_TEXT)
+        await query.answer()
 
     @app.on_message(filters.private & filters.command(["autoreply", "reaction"]))
     async def private_manager_hint(_: Client, message: Message) -> None:
@@ -473,6 +572,17 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
 
     group_commands = filters.group & filters.command(COMMANDS)
 
+    @app.on_message(filters.group & filters.new_chat_members)
+    async def handle_added_to_group(client: Client, message: Message) -> None:
+        me = await client.get_me()
+        if not any(member.id == me.id for member in message.new_chat_members or []):
+            return
+        text, keyboard = await group_onboarding_content(client, repository, message)
+        try:
+            await message.reply_text(text, reply_markup=keyboard)
+        except RPCError:
+            LOGGER.exception("Could not send group onboarding notice in chat %s", message.chat.id)
+
     @app.on_message(group_commands)
     async def handle_command(client: Client, message: Message) -> None:
         if not await require_admin(client, message):
@@ -532,12 +642,20 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         elif action == "cooldown":
             document = await repository.get(chat_id)
             await repository.set_cooldown(
-                chat_id, next_option(document.get("cooldown_seconds", 5), COOLDOWN_OPTIONS)
+                chat_id,
+                next_option(
+                    document.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS),
+                    COOLDOWN_OPTIONS,
+                ),
             )
         elif action == "rate":
             document = await repository.get(chat_id)
             await repository.set_rate_limit(
-                chat_id, next_option(document.get("rate_limit_per_minute", 10), RATE_LIMIT_OPTIONS)
+                chat_id,
+                next_option(
+                    document.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
+                    RATE_LIMIT_OPTIONS,
+                ),
             )
         elif action == "globals":
             await repository.toggle_global_replies(chat_id)
@@ -843,8 +961,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         group_settings = await repository.get(message.chat.id)
         if not group_settings["enabled"] or not interaction_allowed(
             message.chat.id,
-            group_settings.get("cooldown_seconds", 5),
-            group_settings.get("rate_limit_per_minute", 10),
+            group_settings.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS),
+            group_settings.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
         ):
             return
         reply_chance = group_settings.get("reply_chance", 100)
@@ -869,6 +987,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         if reaction:
             try:
                 await retry_flood_wait(lambda: message.react(reaction))
+            except ReactionInvalid:
+                LOGGER.warning(
+                    "Removing invalid reaction %r from chat %s",
+                    reaction,
+                    message.chat.id,
+                )
+                await repository.remove_reaction(message.chat.id, reaction)
             except (Forbidden, ChatAdminRequired):
                 LOGGER.warning("Disabling inaccessible chat %s", message.chat.id)
                 await repository.set_enabled(message.chat.id, False)

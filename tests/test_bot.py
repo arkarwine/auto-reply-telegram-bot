@@ -7,6 +7,7 @@ from pyrogram.errors import FloodWait
 
 from autoreply.bot import (
     BOT_MENU_COMMANDS,
+    HELP_TEXT,
     START_TEXT,
     chance_succeeds,
     choose_reaction,
@@ -57,6 +58,7 @@ def test_choose_reaction_selects_from_configured_reactions() -> None:
 
 def test_choose_reaction_returns_none_for_empty_list() -> None:
     assert choose_reaction(100, []) is None
+    assert choose_reaction(100, ["", "   "]) is None
 
 
 def test_reply_chance_check() -> None:
@@ -118,6 +120,7 @@ def test_disabled_parse_mode_preserves_angle_brackets() -> None:
 def test_start_text_contains_setup_steps() -> None:
     assert "/autoreply" in START_TEXT
     assert "private manager" in START_TEXT
+    assert "/global_defaults" in HELP_TEXT
 
 
 def test_response_label_preserves_existing_text_responses() -> None:
@@ -174,8 +177,9 @@ async def test_send_response_copies_stored_telegram_message() -> None:
         "chat_id": -100999,
         "from_chat_id": -100123,
         "message_id": 42,
-        "reply_to_message_id": 77,
+        "reply_parameters": client.arguments["reply_parameters"],
     }
+    assert client.arguments["reply_parameters"].message_id == 77
 
 
 def test_link_keyboard_uses_configured_links() -> None:
@@ -188,15 +192,18 @@ def test_link_keyboard_uses_configured_links() -> None:
     )
 
     assert keyboard is not None
-    assert [row[0].url for row in keyboard.inline_keyboard] == [
+    assert [button.url for row in keyboard.inline_keyboard for button in row if button.url] == [
         "https://t.me/updates",
         "https://t.me/support",
         "https://t.me/owner",
     ]
+    assert keyboard.inline_keyboard[0][0].text == "Help"
 
 
-def test_link_keyboard_is_hidden_when_no_links_are_configured() -> None:
-    assert link_keyboard({}) is None
+def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:
+    keyboard = link_keyboard({})
+    assert keyboard is not None
+    assert [row[0].text for row in keyboard.inline_keyboard] == ["Help"]
 
 
 def test_link_validation() -> None:
@@ -213,8 +220,8 @@ def test_manager_keyboard_contains_private_controls() -> None:
             "reactions_enabled": True,
             "reply_chance": 75,
             "reaction_chance": 25,
-            "cooldown_seconds": 5,
-            "rate_limit_per_minute": 10,
+            "cooldown_seconds": 0,
+            "rate_limit_per_minute": 5,
             "global_replies_enabled": True,
         },
     )
@@ -225,8 +232,8 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "Enable" in labels
     assert "Reply Chance: 75%" in labels
     assert "Reaction Chance: 25%" in labels
-    assert "Cooldown: 5s" in labels
-    assert "Rate: 10/min" in labels
+    assert "Cooldown: 0s" in labels
+    assert "Rate: 5/min" in labels
     assert "Global Replies On" in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["Add Reply"] == ButtonStyle.SUCCESS

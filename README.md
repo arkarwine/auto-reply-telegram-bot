@@ -1,7 +1,8 @@
 # Telegram Group Interaction Bot
 
 A Kurigram bot that interacts with eligible human messages in a group. It
-rotates through group-specific replies and sometimes adds a random reaction.
+chooses randomly from group-specific/global replies and sometimes adds a random
+reaction.
 
 ## Ubuntu deployment
 
@@ -75,6 +76,8 @@ cannot delete or change them.
 
 A group administrator sends `/autoreply` in the group. The bot replies with an
 **Open Auto Reply Manager** button, then deletes both messages after 30 seconds.
+When the bot is newly added to a group, it posts an onboarding checklist,
+creates the group configuration, and enables auto-reply by default.
 
 The private manager lets admins:
 
@@ -82,8 +85,9 @@ The private manager lets admins:
 - Add any copyable Telegram message as a reply.
 - View, delete, or clear replies.
 - Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%.
-- Configure a group cooldown of 0, 5, 15, 30, or 60 seconds.
+- Configure a group cooldown of 0, 5, 15, 30, or 60 seconds. The default is 0.
 - Configure a rate limit of unlimited, 5, 10, 20, or 30 interactions per minute.
+  The default is 5 per minute.
 - Enable or disable reactions.
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
 - Enable or disable global replies for the group.
@@ -96,6 +100,8 @@ requires confirmation.
 Telegram flood waits are retried automatically. If Telegram reports that the
 bot can no longer access or interact with a group, interactions for that group
 are disabled automatically until an administrator enables them again.
+If Telegram rejects a configured reaction as invalid, that reaction is removed
+from the group's reaction list and auto-reply stays enabled.
 
 Inline manager buttons use Telegram's primary, success, and danger accents to
 distinguish navigation, enabling/add actions, and destructive actions.
@@ -110,7 +116,8 @@ After adding the bot as an administrator, send `/autoreply` in the group and
 open the private manager. Use **Add Reply**, then send text, a photo, video,
 sticker, document, voice note, poll, or another copyable Telegram message.
 The bot registers its command menu during startup and responds to `/start` or
-`/help` in private chat with setup instructions.
+`/help` in private chat with setup instructions. `/start` always includes a
+Help button; updates, support, and owner buttons are shown only when configured.
 
 ## Tests
 

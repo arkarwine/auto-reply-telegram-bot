@@ -9,8 +9,8 @@ MAX_REACTIONS = 20
 DEFAULT_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀"]
 DEFAULT_REACTION_CHANCE = 25
 DEFAULT_REPLY_CHANCE = 100
-DEFAULT_COOLDOWN_SECONDS = 5
-DEFAULT_RATE_LIMIT_PER_MINUTE = 10
+DEFAULT_COOLDOWN_SECONDS = 0
+DEFAULT_RATE_LIMIT_PER_MINUTE = 5
 
 
 class GroupRepository:
@@ -30,7 +30,7 @@ class GroupRepository:
         document = await self.collection.find_one({"_id": chat_id})
         defaults = {
             "_id": chat_id,
-            "enabled": False,
+            "enabled": True,
             "responses": [],
             "next_index": 0,
             "reply_chance": DEFAULT_REPLY_CHANCE,
@@ -78,7 +78,7 @@ class GroupRepository:
             {
                 "$push": {"responses": response},
                 "$setOnInsert": {
-                    "enabled": False,
+                    "enabled": True,
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
                     "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
@@ -149,7 +149,7 @@ class GroupRepository:
             {
                 "$set": {"reply_chance": chance},
                 "$setOnInsert": {
-                    "enabled": False,
+                    "enabled": True,
                     "responses": [],
                     "next_index": 0,
                     "reactions_enabled": True,
@@ -244,7 +244,7 @@ class GroupRepository:
             {
                 "$set": {"reactions_enabled": enabled},
                 "$setOnInsert": {
-                    "enabled": False,
+                    "enabled": True,
                     "responses": [],
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
@@ -261,7 +261,7 @@ class GroupRepository:
             {
                 "$set": {"reaction_chance": chance},
                 "$setOnInsert": {
-                    "enabled": False,
+                    "enabled": True,
                     "responses": [],
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
@@ -286,7 +286,7 @@ class GroupRepository:
             {
                 "$set": {"reactions": reactions},
                 "$setOnInsert": {
-                    "enabled": False,
+                    "enabled": True,
                     "responses": [],
                     "next_index": 0,
                     "reply_chance": DEFAULT_REPLY_CHANCE,
@@ -299,11 +299,17 @@ class GroupRepository:
         return "added"
 
     async def remove_reaction(self, chat_id: int, reaction: str) -> bool:
-        result = await self.collection.update_one(
-            {"_id": chat_id, "reactions": reaction},
-            {"$pull": {"reactions": reaction}},
+        document = await self.get(chat_id)
+        reactions = list(document.get("reactions", DEFAULT_REACTIONS))
+        if reaction not in reactions:
+            return False
+        reactions.remove(reaction)
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"reactions": reactions}},
+            upsert=True,
         )
-        return result.modified_count > 0
+        return True
 
     async def reaction_settings(self, chat_id: int) -> tuple[int, list[str]] | None:
         document = await self.collection.find_one(

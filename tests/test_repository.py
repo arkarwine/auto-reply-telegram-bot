@@ -31,6 +31,16 @@ class FakeCollection:
             return deepcopy(self.document)
         return None
 
+    async def update_one(self, query, update, upsert=False):
+        if not self.document:
+            self.document = {"_id": query["_id"]}
+        if "$set" in update:
+            self.document.update(update["$set"])
+        if "$setOnInsert" in update:
+            for key, value in update["$setOnInsert"].items():
+                self.document.setdefault(key, value)
+        return type("Result", (), {"modified_count": 1})()
+
 
 class FakeSettingsCollection:
     def __init__(self, responses=None):
@@ -58,6 +68,17 @@ def repository_with(document, global_responses=None) -> GroupRepository:
     repository.collection = FakeCollection(document)
     repository.settings_collection = FakeSettingsCollection(global_responses)
     return repository
+
+
+@pytest.mark.asyncio
+async def test_new_group_defaults_to_enabled_with_minimal_rate_and_no_cooldown() -> None:
+    repository = repository_with(None)
+
+    document = await repository.get(123)
+
+    assert document["enabled"] is True
+    assert document["cooldown_seconds"] == 0
+    assert document["rate_limit_per_minute"] == 5
 
 
 @pytest.mark.asyncio
@@ -134,3 +155,13 @@ async def test_reply_chance_returns_none_for_disabled_group() -> None:
     )
 
     assert await repository.reply_chance(123) is None
+
+
+@pytest.mark.asyncio
+async def test_remove_reaction_persists_default_reaction_list_without_invalid_value() -> None:
+    repository = repository_with(None)
+
+    assert await repository.remove_reaction(123, "👀")
+    document = await repository.get(123)
+
+    assert "👀" not in document["reactions"]
