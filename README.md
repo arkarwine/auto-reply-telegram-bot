@@ -112,6 +112,13 @@ The private manager lets admins:
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
 - Enable or disable global replies for the group.
 - Exclude individual global replies from the group.
+- Open a separate **Mention All** category to configure the call limit, members
+  per message, and delay between messages.
+
+Group admins can use `/all [message]` to mention known members in configurable
+batches. `/stopall`, `/stop`, or `/stopcall` immediately stops the active call.
+Before each call, the bot syncs current members when Telegram permits it and
+falls back to members learned as they speak or join.
 
 Replies are selected randomly from the group's local replies and its allowed
 global replies. Reply lists show 10 truncated entries per page and stay in one

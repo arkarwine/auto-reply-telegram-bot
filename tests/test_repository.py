@@ -105,6 +105,9 @@ async def test_new_group_defaults_to_enabled_with_conservative_interactions() ->
     assert document["reply_chance"] == 50
     assert document["cooldown_seconds"] == 10
     assert document["rate_limit_per_minute"] == 0
+    assert document["mention_limit"] == 100
+    assert document["mention_batch_size"] == 5
+    assert document["mention_delay_seconds"] == 2
 
 
 @pytest.mark.asyncio
