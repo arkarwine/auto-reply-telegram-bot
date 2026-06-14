@@ -11,6 +11,14 @@ DEFAULT_REACTION_CHANCE = 25
 DEFAULT_REPLY_CHANCE = 50
 DEFAULT_COOLDOWN_SECONDS = 10
 DEFAULT_RATE_LIMIT_PER_MINUTE = 0
+GLOBAL_CONFIG_KEYS = (
+    "enabled",
+    "reply_chance",
+    "cooldown_seconds",
+    "rate_limit_per_minute",
+    "reactions_enabled",
+    "reaction_chance",
+)
 
 
 class GroupRepository:
@@ -26,50 +34,100 @@ class GroupRepository:
     async def close(self) -> None:
         await self.client.close()
 
-    async def get(self, chat_id: int) -> dict[str, Any]:
-        document = await self.collection.find_one({"_id": chat_id})
+    async def get_global_config(self) -> dict[str, Any]:
+        document = await self.settings_collection.find_one({"_id": "global_config"})
         defaults = {
-            "_id": chat_id,
             "enabled": True,
-            "responses": [],
-            "next_index": 0,
             "reply_chance": DEFAULT_REPLY_CHANCE,
             "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
             "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
-            "global_replies_enabled": True,
-            "excluded_global_responses": [],
             "reactions_enabled": True,
             "reaction_chance": DEFAULT_REACTION_CHANCE,
-            "reactions": list(DEFAULT_REACTIONS),
         }
         return defaults | document if document else defaults
 
-    async def set_enabled(self, chat_id: int, enabled: bool) -> None:
+    async def set_global_config(self, name: str, value: Any) -> None:
+        await self.settings_collection.update_one(
+            {"_id": "global_config"},
+            {"$set": {name: value}},
+            upsert=True,
+        )
+
+    async def ensure_group(self, chat_id: int) -> None:
         await self.collection.update_one(
             {"_id": chat_id},
             {
-                "$set": {"enabled": enabled},
                 "$setOnInsert": {
                     "responses": [],
-                    "next_index": 0,
-                    "reply_chance": DEFAULT_REPLY_CHANCE,
-                    "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
-                    "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
                     "global_replies_enabled": True,
                     "excluded_global_responses": [],
-                    "reactions_enabled": True,
-                    "reaction_chance": DEFAULT_REACTION_CHANCE,
                     "reactions": DEFAULT_REACTIONS,
-                },
+                    "config_overrides": [],
+                }
             },
             upsert=True,
         )
+
+    async def get(self, chat_id: int) -> dict[str, Any]:
+        document = await self.collection.find_one({"_id": chat_id})
+        global_config = await self.get_global_config()
+        defaults = {
+            "_id": chat_id,
+            "enabled": global_config["enabled"],
+            "responses": [],
+            "next_index": 0,
+            "reply_chance": global_config["reply_chance"],
+            "cooldown_seconds": global_config["cooldown_seconds"],
+            "rate_limit_per_minute": global_config["rate_limit_per_minute"],
+            "global_replies_enabled": True,
+            "excluded_global_responses": [],
+            "reactions_enabled": global_config["reactions_enabled"],
+            "reaction_chance": global_config["reaction_chance"],
+            "reactions": list(DEFAULT_REACTIONS),
+            "config_overrides": [],
+        }
+        if not document:
+            return defaults
+        overrides = set(document.get("config_overrides", []))
+        # Preserve disabled legacy groups, including groups disabled after permission errors.
+        if document.get("enabled") is False:
+            overrides.add("enabled")
+        effective = defaults | {
+            key: value for key, value in document.items() if key not in GLOBAL_CONFIG_KEYS
+        }
+        for key in overrides:
+            if key in document:
+                effective[key] = document[key]
+        effective["config_overrides"] = list(overrides)
+        return effective
+
+    async def set_local_config(self, chat_id: int, name: str, value: Any) -> None:
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {name: value}, "$addToSet": {"config_overrides": name}},
+            upsert=True,
+        )
+
+    async def clear_local_config(self, chat_id: int, name: str | None = None) -> None:
+        if name:
+            update = {"$pull": {"config_overrides": name}, "$unset": {name: ""}}
+        else:
+            update = {
+                "$set": {"config_overrides": []},
+                "$unset": {key: "" for key in GLOBAL_CONFIG_KEYS},
+            }
+        await self.collection.update_one({"_id": chat_id}, update, upsert=True)
+
+    async def set_enabled(self, chat_id: int, enabled: bool) -> None:
+        await self.ensure_group(chat_id)
+        await self.set_local_config(chat_id, "enabled", enabled)
 
     async def group_ids(self) -> list[int]:
         return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
 
     async def add_response(self, chat_id: int, response: Any) -> str:
         document = await self.get(chat_id)
+        global_config = await self.get_global_config()
         responses = document["responses"]
         if response in responses:
             return "duplicate"
@@ -81,15 +139,15 @@ class GroupRepository:
             {
                 "$push": {"responses": response},
                 "$setOnInsert": {
-                    "enabled": True,
+                    "enabled": global_config["enabled"],
                     "next_index": 0,
-                    "reply_chance": DEFAULT_REPLY_CHANCE,
-                    "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS,
-                    "rate_limit_per_minute": DEFAULT_RATE_LIMIT_PER_MINUTE,
+                    "reply_chance": global_config["reply_chance"],
+                    "cooldown_seconds": global_config["cooldown_seconds"],
+                    "rate_limit_per_minute": global_config["rate_limit_per_minute"],
                     "global_replies_enabled": True,
                     "excluded_global_responses": [],
-                    "reactions_enabled": True,
-                    "reaction_chance": DEFAULT_REACTION_CHANCE,
+                    "reactions_enabled": global_config["reactions_enabled"],
+                    "reaction_chance": global_config["reaction_chance"],
                     "reactions": DEFAULT_REACTIONS,
                 },
             },
@@ -145,35 +203,13 @@ class GroupRepository:
         return document.get("reply_chance", DEFAULT_REPLY_CHANCE) if document else None
 
     async def set_reply_chance(self, chat_id: int, chance: int) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {
-                "$set": {"reply_chance": chance},
-                "$setOnInsert": {
-                    "enabled": True,
-                    "responses": [],
-                    "next_index": 0,
-                    "reactions_enabled": True,
-                    "reaction_chance": DEFAULT_REACTION_CHANCE,
-                    "reactions": DEFAULT_REACTIONS,
-                },
-            },
-            upsert=True,
-        )
+        await self.set_local_config(chat_id, "reply_chance", chance)
 
     async def set_cooldown(self, chat_id: int, seconds: int) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {"$set": {"cooldown_seconds": seconds}},
-            upsert=True,
-        )
+        await self.set_local_config(chat_id, "cooldown_seconds", seconds)
 
     async def set_rate_limit(self, chat_id: int, per_minute: int) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {"$set": {"rate_limit_per_minute": per_minute}},
-            upsert=True,
-        )
+        await self.set_local_config(chat_id, "rate_limit_per_minute", per_minute)
 
     async def toggle_global_replies(self, chat_id: int) -> bool:
         document = await self.get(chat_id)
@@ -244,38 +280,10 @@ class GroupRepository:
         return len(responses)
 
     async def set_reactions_enabled(self, chat_id: int, enabled: bool) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {
-                "$set": {"reactions_enabled": enabled},
-                "$setOnInsert": {
-                    "enabled": True,
-                    "responses": [],
-                    "next_index": 0,
-                    "reply_chance": DEFAULT_REPLY_CHANCE,
-                    "reaction_chance": DEFAULT_REACTION_CHANCE,
-                    "reactions": DEFAULT_REACTIONS,
-                },
-            },
-            upsert=True,
-        )
+        await self.set_local_config(chat_id, "reactions_enabled", enabled)
 
     async def set_reaction_chance(self, chat_id: int, chance: int) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {
-                "$set": {"reaction_chance": chance},
-                "$setOnInsert": {
-                    "enabled": True,
-                    "responses": [],
-                    "next_index": 0,
-                    "reply_chance": DEFAULT_REPLY_CHANCE,
-                    "reactions_enabled": True,
-                    "reactions": DEFAULT_REACTIONS,
-                },
-            },
-            upsert=True,
-        )
+        await self.set_local_config(chat_id, "reaction_chance", chance)
 
     async def add_reaction(self, chat_id: int, reaction: str) -> str:
         document = await self.get(chat_id)
@@ -317,11 +325,8 @@ class GroupRepository:
         return True
 
     async def reaction_settings(self, chat_id: int) -> tuple[int, list[str]] | None:
-        document = await self.collection.find_one(
-            {"_id": chat_id, "enabled": True, "reactions_enabled": {"$ne": False}},
-            {"reaction_chance": 1, "reactions": 1},
-        )
-        if not document:
+        document = await self.get(chat_id)
+        if not document["enabled"] or not document.get("reactions_enabled", True):
             return None
         return (
             document.get("reaction_chance", DEFAULT_REACTION_CHANCE),

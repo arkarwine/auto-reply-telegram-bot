@@ -79,6 +79,11 @@ cannot delete or change them.
 
 New global replies become available immediately in every enabled group with
 global replies turned on, including groups without a saved local reply.
+The Global Defaults manager also configures the initial enabled state, reply
+chance, reaction settings, cooldown, and rate limit inherited live by groups.
+Global changes take effect immediately unless a group locally overrides that
+specific setting. Group admins can reset individual overrides or all behavior
+settings from **Global Options** in their manager.
 
 Owner and sudoers can use `/broadcast <text>` in private chat, or reply to any
 Telegram message with `/broadcast`, then confirm delivery to every known group.
@@ -124,6 +129,10 @@ distinguish navigation, enabling/add actions, and destructive actions.
 
 Configuration changes happen entirely in private chat. Commands, service
 events, and messages sent by other bots are ignored.
+
+Every group is recorded as soon as the bot sees any group message or service
+event. This makes it immediately eligible for global auto-replies and future
+broadcasts unless auto-reply is disabled for that group.
 
 Automatic Telegram text parsing is disabled, so literal text such as
 `<message>` and angle brackets inside configured replies remains visible.

@@ -40,6 +40,17 @@ class FakeCollection:
         if "$setOnInsert" in update:
             for key, value in update["$setOnInsert"].items():
                 self.document.setdefault(key, value)
+        if "$addToSet" in update:
+            for key, value in update["$addToSet"].items():
+                values = self.document.setdefault(key, [])
+                if value not in values:
+                    values.append(value)
+        if "$pull" in update:
+            for key, value in update["$pull"].items():
+                self.document[key] = [item for item in self.document.get(key, []) if item != value]
+        if "$unset" in update:
+            for key in update["$unset"]:
+                self.document.pop(key, None)
         return type("Result", (), {"modified_count": 1})()
 
     async def update_many(self, query, update):
@@ -48,12 +59,13 @@ class FakeCollection:
 
 
 class FakeSettingsCollection:
-    def __init__(self, responses=None):
+    def __init__(self, responses=None, config=None):
         self.document = {
             "_id": "global_responses",
             "responses": responses or [],
             "next_index": 0,
         }
+        self.config = {"_id": "global_config", **(config or {})}
 
     async def find_one_and_update(self, query, update, return_document):
         if not self.document["responses"]:
@@ -65,18 +77,21 @@ class FakeSettingsCollection:
         return previous
 
     async def find_one(self, query):
-        return deepcopy(self.document)
+        return deepcopy(self.config if query["_id"] == "global_config" else self.document)
 
     async def update_one(self, query, update, upsert=False):
+        target = self.config if query["_id"] == "global_config" else self.document
         if "$push" in update:
-            self.document["responses"].append(update["$push"]["responses"])
+            target["responses"].append(update["$push"]["responses"])
+        if "$set" in update:
+            target.update(update["$set"])
         return type("Result", (), {"modified_count": 1})()
 
 
-def repository_with(document, global_responses=None) -> GroupRepository:
+def repository_with(document, global_responses=None, global_config=None) -> GroupRepository:
     repository = GroupRepository.__new__(GroupRepository)
     repository.collection = FakeCollection(document)
-    repository.settings_collection = FakeSettingsCollection(global_responses)
+    repository.settings_collection = FakeSettingsCollection(global_responses, global_config)
     return repository
 
 
@@ -90,6 +105,71 @@ async def test_new_group_defaults_to_enabled_with_conservative_interactions() ->
     assert document["reply_chance"] == 50
     assert document["cooldown_seconds"] == 10
     assert document["rate_limit_per_minute"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_group_immediately_creates_broadcast_target() -> None:
+    repository = repository_with(None)
+
+    await repository.ensure_group(-100123)
+
+    assert repository.collection.document["_id"] == -100123
+    assert repository.collection.document["responses"] == []
+    assert repository.collection.document["config_overrides"] == []
+
+
+@pytest.mark.asyncio
+async def test_new_group_inherits_configurable_global_defaults() -> None:
+    repository = repository_with(
+        None,
+        global_config={
+            "enabled": False,
+            "reply_chance": 25,
+            "cooldown_seconds": 30,
+            "rate_limit_per_minute": 5,
+            "reactions_enabled": False,
+            "reaction_chance": 0,
+        },
+    )
+
+    document = await repository.get(123)
+
+    assert document["enabled"] is False
+    assert document["reply_chance"] == 25
+    assert document["cooldown_seconds"] == 30
+    assert document["rate_limit_per_minute"] == 5
+    assert document["reactions_enabled"] is False
+    assert document["reaction_chance"] == 0
+
+
+@pytest.mark.asyncio
+async def test_global_config_changes_immediately_affect_non_overridden_group() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": True, "reply_chance": 100, "cooldown_seconds": 60},
+        global_config={"reply_chance": 25, "cooldown_seconds": 30},
+    )
+
+    document = await repository.get(123)
+
+    assert document["reply_chance"] == 25
+    assert document["cooldown_seconds"] == 30
+
+
+@pytest.mark.asyncio
+async def test_local_override_survives_global_change_until_reset() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_chance": 75,
+            "config_overrides": ["reply_chance"],
+        },
+        global_config={"reply_chance": 25},
+    )
+
+    assert (await repository.get(123))["reply_chance"] == 75
+    await repository.clear_local_config(123, "reply_chance")
+    assert (await repository.get(123))["reply_chance"] == 25
 
 
 @pytest.mark.asyncio

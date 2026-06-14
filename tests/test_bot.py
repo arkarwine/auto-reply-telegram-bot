@@ -24,6 +24,7 @@ from autoreply.bot import (
     interaction_allowed,
     is_sudoer,
     link_keyboard,
+    local_global_options_keyboard,
     manager_keyboard,
     message_label,
     response_label,
@@ -449,16 +450,34 @@ def test_manager_keyboard_contains_private_controls() -> None:
 
     assert "➕ Add Reply" in labels
     assert "📚 Replies" in labels
-    assert "▶️ Enable" in labels
-    assert "💬 Reply: 75%" in labels
-    assert "🎲 React: 25%" in labels
-    assert "⏱ 0s" in labels
-    assert "🚦 ∞/min" in labels
+    assert "🌐 ▶️ Enable" in labels
+    assert "🌐 Reply: 75%" in labels
+    assert "🌐 React: 25%" in labels
+    assert "🌐 0s" in labels
+    assert "🌐 ∞/min" in labels
     assert "🌐 Globals: On" in labels
+    assert "🌐 Global Options" in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
-    assert styles["▶️ Enable"] == ButtonStyle.SUCCESS
+    assert styles["🌐 ▶️ Enable"] == ButtonStyle.SUCCESS
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
+
+
+def test_local_global_options_cover_behavior_settings() -> None:
+    labels = [
+        button.text for row in local_global_options_keyboard(-100123).inline_keyboard for button in row
+    ]
+
+    assert labels == [
+        "🌐 Enabled",
+        "🌐 Reply Chance",
+        "🌐 Reactions",
+        "🌐 React Chance",
+        "🌐 Cooldown",
+        "🌐 Rate",
+        "🌐 Reset All",
+        "⬅️ Manager",
+    ]
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:
@@ -473,14 +492,24 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
     keyboard = global_manager_keyboard()
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert labels == ["➕ Add Global", "🌐 Replies", "🗑 Clear Globals"]
+    assert labels == [
+        "➕ Add Global",
+        "🌐 Replies",
+        "⏸ New Groups: Off",
+        "🎭 Reactions: On",
+        "💬 Reply: 50%",
+        "🎲 React: 25%",
+        "⏱ 10s",
+        "🚦 ∞/min",
+        "🗑 Clear Globals",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_group_onboarding_mentions_only_unmet_requirements() -> None:
     class FakeRepository:
-        async def set_enabled(self, chat_id, enabled):
-            assert (chat_id, enabled) == (-100123, True)
+        async def ensure_group(self, chat_id):
+            assert chat_id == -100123
 
     class FakeClient:
         async def get_me(self):
