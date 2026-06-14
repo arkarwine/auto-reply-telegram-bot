@@ -25,8 +25,6 @@ from autoreply.bot import (
     is_sudoer,
     link_keyboard,
     manager_keyboard,
-    mention_batches,
-    mention_manager_keyboard,
     message_label,
     response_label,
     response_preview_text,
@@ -165,15 +163,11 @@ def test_public_bot_menu_hides_sudoer_commands() -> None:
         "start",
         "help",
         "autoreply",
-        "all",
-        "stopall",
     }
     assert {command.command for command in SUDOER_BOT_COMMANDS} == {
         "start",
         "help",
         "autoreply",
-        "all",
-        "stopall",
         "updates",
         "support",
         "owner_link",
@@ -464,7 +458,6 @@ def test_manager_keyboard_contains_private_controls() -> None:
 
     assert "➕ Add Reply" in labels
     assert "📚 Replies" in labels
-    assert "📣 Mention All" in labels
     assert "🌐 Global: ▶️ Enable" in labels
     assert "🌐 Global: Reply: 75%" in labels
     assert "🌐 Global: React: 25%" in labels
@@ -476,38 +469,6 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
     assert styles["🌐 Global: ▶️ Enable"] == ButtonStyle.SUCCESS
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
-
-
-def test_mention_manager_has_separate_controls() -> None:
-    keyboard = mention_manager_keyboard(
-        -100123,
-        {
-            "mention_limit": 100,
-            "mention_batch_size": 5,
-            "mention_delay_seconds": 2,
-        },
-    )
-    labels = [button.text for row in keyboard.inline_keyboard for button in row]
-
-    assert labels == ["👥 Limit: 100", "📦 Batch: 5", "⏱ Delay: 2s", "⬅️ Manager"]
-    assert keyboard.inline_keyboard[-1][0].style == ButtonStyle.DANGER
-
-
-def test_mention_batches_escape_text_and_split_members() -> None:
-    batches = mention_batches(
-        [
-            {"user_id": 1, "first_name": "One"},
-            {"user_id": 2, "first_name": "Two_Name"},
-            {"user_id": 3, "first_name": "Three"},
-        ],
-        2,
-        "Hello [all]",
-    )
-
-    assert len(batches) == 2
-    assert "Hello \\[all\\]" in batches[0]
-    assert "[Two\\_Name](tg://user?id=2)" in batches[0]
-    assert "tg://user?id=3" in batches[1]
 
 
 def test_manager_marks_local_override_directly_on_setting() -> None:

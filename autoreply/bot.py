@@ -26,9 +26,6 @@ from autoreply.repository import (
     DEFAULT_RATE_LIMIT_PER_MINUTE,
     DEFAULT_REACTION_CHANCE,
     DEFAULT_REPLY_CHANCE,
-    DEFAULT_MENTION_BATCH_SIZE,
-    DEFAULT_MENTION_DELAY_SECONDS,
-    DEFAULT_MENTION_LIMIT,
     GroupRepository,
     MAX_RESPONSES,
 )
@@ -47,8 +44,6 @@ PUBLIC_BOT_COMMANDS = [
     BotCommand("start", "🚀 Open the bot"),
     BotCommand("help", "❓ Quick help"),
     BotCommand("autoreply", "⚙️ Manage a group"),
-    BotCommand("all", "📣 Mention known members"),
-    BotCommand("stopall", "🛑 Stop mentioning"),
 ]
 SUDOER_BOT_COMMANDS = [
     *PUBLIC_BOT_COMMANDS,
@@ -95,9 +90,6 @@ REPLIES_PER_PAGE = 10
 REPLY_LABEL_LIMIT = 42
 COOLDOWN_OPTIONS = [0, 5, 10, 15, 30, 60]
 RATE_LIMIT_OPTIONS = [0, 5, 10, 20, 30]
-MENTION_LIMIT_OPTIONS = [25, 50, 100, 250, 500]
-MENTION_BATCH_OPTIONS = [1, 5, 10, 20]
-MENTION_DELAY_OPTIONS = [1, 2, 3, 5, 10]
 _last_interaction: dict[int, float] = {}
 _recent_interactions: dict[int, deque[float]] = defaultdict(deque)
 T = TypeVar("T")
@@ -106,28 +98,6 @@ T = TypeVar("T")
 def command_argument(message: Message) -> str:
     text = message.text or ""
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
-
-
-def markdown_escape(text: str) -> str:
-    for character in ("\\", "`", "*", "_", "[", "]", "(", ")"):
-        text = text.replace(character, f"\\{character}")
-    return text
-
-
-def mention_batches(
-    members: list[dict],
-    batch_size: int,
-    heading: str = "",
-) -> list[str]:
-    heading = markdown_escape(heading)
-    batches = []
-    for start in range(0, len(members), batch_size):
-        links = [
-            f"[{markdown_escape(member.get('first_name') or 'Member')}](tg://user?id={member['user_id']})"
-            for member in members[start : start + batch_size]
-        ]
-        batches.append("\n\n".join(part for part in (heading, " • ".join(links)) if part))
-    return batches
 
 
 def broadcast_source(message: Message) -> object | None:
@@ -555,13 +525,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "📣 Mention All",
-                    callback_data=f"mgr:mentions:{chat_id}",
-                    style=ButtonStyle.PRIMARY,
-                )
-            ],
-            [
-                InlineKeyboardButton(
                     "➕ Add Reply", callback_data=f"mgr:add:{chat_id}", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
@@ -638,53 +601,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}"),
             ],
         ]
-    )
-
-
-def mention_manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    f"👥 Limit: {document.get('mention_limit', DEFAULT_MENTION_LIMIT)}",
-                    callback_data=f"mgr:mention-limit:{chat_id}",
-                ),
-                InlineKeyboardButton(
-                    f"📦 Batch: {document.get('mention_batch_size', DEFAULT_MENTION_BATCH_SIZE)}",
-                    callback_data=f"mgr:mention-batch:{chat_id}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"⏱ Delay: {document.get('mention_delay_seconds', DEFAULT_MENTION_DELAY_SECONDS)}s",
-                    callback_data=f"mgr:mention-delay:{chat_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⬅️ Manager",
-                    callback_data=f"mgr:open:{chat_id}",
-                    style=ButtonStyle.DANGER,
-                )
-            ],
-        ]
-    )
-
-
-async def mention_manager_content(
-    repository: GroupRepository, chat_id: int
-) -> tuple[str, InlineKeyboardMarkup]:
-    document = await repository.get(chat_id)
-    count = await repository.member_count(chat_id)
-    return (
-        "📣 Mention All\n\n"
-        f"👥 Known members: {count}\n"
-        f"📦 {document.get('mention_batch_size', DEFAULT_MENTION_BATCH_SIZE)} per message  •  "
-        f"⏱ {document.get('mention_delay_seconds', DEFAULT_MENTION_DELAY_SECONDS)}s delay  •  "
-        f"🎯 Up to {document.get('mention_limit', DEFAULT_MENTION_LIMIT)}\n\n"
-        "Use /all [message] in the group.\n"
-        "Use /stopall to stop an active call.",
-        mention_manager_keyboard(chat_id, document),
     )
 
 
@@ -896,20 +812,9 @@ async def group_onboarding_content(
 
 
 def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
-    mention_tasks: dict[int, asyncio.Task] = {}
-
     @app.on_message(filters.group, group=-1)
     async def record_group(_: Client, message: Message) -> None:
         await repository.ensure_group(message.chat.id)
-        users = [message.from_user] if message.from_user else []
-        users.extend(message.new_chat_members or [])
-        for user in users:
-            if not user.is_bot:
-                await repository.record_member(
-                    message.chat.id, user.id, user.first_name, user.username
-                )
-        if message.left_chat_member:
-            await repository.remove_member(message.chat.id, message.left_chat_member.id)
 
     @app.on_message(filters.private & filters.command(["start", "help"]))
     async def private_help(client: Client, message: Message) -> None:
@@ -1082,81 +987,6 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         except RPCError:
             LOGGER.exception("Could not send group onboarding notice in chat %s", message.chat.id)
 
-    async def run_mentions(client: Client, message: Message) -> None:
-        chat_id = message.chat.id
-        document = await repository.get(chat_id)
-        limit = document.get("mention_limit", DEFAULT_MENTION_LIMIT)
-        try:
-            async for member in client.get_chat_members(chat_id, limit=limit):
-                if not member.user.is_bot:
-                    await repository.record_member(
-                        chat_id,
-                        member.user.id,
-                        member.user.first_name,
-                        member.user.username,
-                    )
-        except RPCError as exc:
-            LOGGER.info("Using known members for chat %s: %s", chat_id, exc)
-        members = await repository.get_members(
-            chat_id, limit
-        )
-        batches = mention_batches(
-            members,
-            document.get("mention_batch_size", DEFAULT_MENTION_BATCH_SIZE),
-            command_argument(message),
-        )
-        if not batches:
-            await message.reply_text(
-                "⚠️ No known members yet. I learn members as they speak or join."
-            )
-            return
-        try:
-            for position, text in enumerate(batches):
-                await retry_flood_wait(
-                    lambda text=text: client.send_message(
-                        chat_id,
-                        text,
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True,
-                    )
-                )
-                if position + 1 < len(batches):
-                    await asyncio.sleep(
-                        document.get("mention_delay_seconds", DEFAULT_MENTION_DELAY_SECONDS)
-                    )
-        except asyncio.CancelledError:
-            raise
-        except (Forbidden, ChatAdminRequired):
-            await message.reply_text("⚠️ I cannot send mention messages here.")
-        except RPCError:
-            LOGGER.exception("Mention all failed in chat %s", chat_id)
-            await message.reply_text("⚠️ Mentioning stopped after a Telegram error.")
-        finally:
-            if mention_tasks.get(chat_id) is asyncio.current_task():
-                mention_tasks.pop(chat_id, None)
-
-    @app.on_message(filters.group & filters.command("all"))
-    async def mention_all_command(client: Client, message: Message) -> None:
-        if not await require_admin(client, message):
-            return
-        task = mention_tasks.get(message.chat.id)
-        if task and not task.done():
-            await message.reply_text("⚠️ A mention call is already running. Use /stopall first.")
-            return
-        mention_tasks[message.chat.id] = asyncio.create_task(run_mentions(client, message))
-        await message.reply_text("📣 Mentioning known members…  /stopall to stop.")
-
-    @app.on_message(filters.group & filters.command(["stopall", "stop", "stopcall"]))
-    async def stop_mentions_command(client: Client, message: Message) -> None:
-        if not await require_admin(client, message):
-            return
-        task = mention_tasks.pop(message.chat.id, None)
-        if not task or task.done():
-            await message.reply_text("ℹ️ No mention call is running.")
-            return
-        task.cancel()
-        await message.reply_text("🛑 Mention call stopped.")
-
     @app.on_message(group_commands)
     async def handle_command(client: Client, message: Message) -> None:
         if not await require_admin(client, message):
@@ -1196,26 +1026,6 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "➕ Send the reply to save.\n\n/cancel to stop."
             )
             await query.answer("📥 Waiting for reply…")
-            return
-        if action == "mentions":
-            text, keyboard = await mention_manager_content(repository, chat_id)
-            await query.message.edit_text(text, reply_markup=keyboard)
-            await query.answer()
-            return
-        if action in {"mention-limit", "mention-batch", "mention-delay"}:
-            document = await repository.get(chat_id)
-            if action == "mention-limit":
-                name, options = "mention_limit", MENTION_LIMIT_OPTIONS
-            elif action == "mention-batch":
-                name, options = "mention_batch_size", MENTION_BATCH_OPTIONS
-            else:
-                name, options = "mention_delay_seconds", MENTION_DELAY_OPTIONS
-            await repository.set_mention_setting(
-                chat_id, name, next_option(document.get(name, options[0]), options)
-            )
-            text, keyboard = await mention_manager_content(repository, chat_id)
-            await query.message.edit_text(text, reply_markup=keyboard)
-            await query.answer("✅ Updated")
             return
         if action == "toggle":
             document = await repository.get(chat_id)

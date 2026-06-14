@@ -11,9 +11,6 @@ DEFAULT_REACTION_CHANCE = 25
 DEFAULT_REPLY_CHANCE = 50
 DEFAULT_COOLDOWN_SECONDS = 10
 DEFAULT_RATE_LIMIT_PER_MINUTE = 0
-DEFAULT_MENTION_LIMIT = 100
-DEFAULT_MENTION_BATCH_SIZE = 5
-DEFAULT_MENTION_DELAY_SECONDS = 2
 GLOBAL_CONFIG_KEYS = (
     "enabled",
     "reply_chance",
@@ -30,7 +27,6 @@ class GroupRepository:
         self.collection = self.client[database_name]["groups"]
         self.settings_collection = self.client[database_name]["bot_settings"]
         self.states_collection = self.client[database_name]["user_states"]
-        self.members_collection = self.client[database_name]["group_members"]
 
     async def ping(self) -> None:
         await self.client.admin.command("ping")
@@ -67,9 +63,6 @@ class GroupRepository:
                     "excluded_global_responses": [],
                     "reactions": DEFAULT_REACTIONS,
                     "config_overrides": [],
-                    "mention_limit": DEFAULT_MENTION_LIMIT,
-                    "mention_batch_size": DEFAULT_MENTION_BATCH_SIZE,
-                    "mention_delay_seconds": DEFAULT_MENTION_DELAY_SECONDS,
                 }
             },
             upsert=True,
@@ -92,9 +85,6 @@ class GroupRepository:
             "reaction_chance": global_config["reaction_chance"],
             "reactions": list(DEFAULT_REACTIONS),
             "config_overrides": [],
-            "mention_limit": DEFAULT_MENTION_LIMIT,
-            "mention_batch_size": DEFAULT_MENTION_BATCH_SIZE,
-            "mention_delay_seconds": DEFAULT_MENTION_DELAY_SECONDS,
         }
         if not document:
             return defaults
@@ -134,43 +124,6 @@ class GroupRepository:
 
     async def group_ids(self) -> list[int]:
         return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
-
-    async def record_member(
-        self,
-        chat_id: int,
-        user_id: int,
-        first_name: str | None,
-        username: str | None,
-    ) -> None:
-        await self.members_collection.update_one(
-            {"_id": f"{chat_id}:{user_id}"},
-            {
-                "$set": {
-                    "chat_id": chat_id,
-                    "user_id": user_id,
-                    "first_name": first_name or "Member",
-                    "username": username,
-                }
-            },
-            upsert=True,
-        )
-
-    async def get_members(self, chat_id: int, limit: int) -> list[dict[str, Any]]:
-        cursor = self.members_collection.find({"chat_id": chat_id}).limit(limit)
-        return [member async for member in cursor]
-
-    async def member_count(self, chat_id: int) -> int:
-        return await self.members_collection.count_documents({"chat_id": chat_id})
-
-    async def remove_member(self, chat_id: int, user_id: int) -> None:
-        await self.members_collection.delete_one({"_id": f"{chat_id}:{user_id}"})
-
-    async def set_mention_setting(self, chat_id: int, name: str, value: int) -> None:
-        await self.collection.update_one(
-            {"_id": chat_id},
-            {"$set": {name: value}},
-            upsert=True,
-        )
 
     async def add_response(self, chat_id: int, response: Any) -> str:
         document = await self.get(chat_id)
