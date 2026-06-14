@@ -131,6 +131,16 @@ def next_option(current: int, options: list[int]) -> int:
         return options[0]
 
 
+def next_local_option(document: dict, name: str, options: list) -> object | None:
+    current = document[name]
+    if name in document.get("config_overrides", []) and current == options[-1]:
+        return None
+    try:
+        return options[(options.index(current) + 1) % len(options)]
+    except ValueError:
+        return options[0]
+
+
 def interaction_allowed(chat_id: int, cooldown: int, per_minute: int, now: float | None = None) -> bool:
     current = monotonic() if now is None else now
     if cooldown and current - _last_interaction.get(chat_id, float("-inf")) < cooldown:
@@ -506,7 +516,9 @@ async def delete_later(*messages: Message) -> None:
 
 def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     overrides = set(document.get("config_overrides", []))
-    marker = lambda name: "🏠" if name in overrides else "🌐"
+    setting = lambda name, value: (
+        f"🏠 {value}" if name in overrides else f"🌐 Global: {value}"
+    )
     enabled_label = "⏸ Disable" if document["enabled"] else "▶️ Enable"
     reactions_label = "🎭 Reactions: On" if document.get("reactions_enabled", True) else "🎭 Reactions: Off"
     return InlineKeyboardMarkup(
@@ -521,12 +533,12 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    f"{marker('enabled')} {enabled_label}",
+                    setting("enabled", enabled_label),
                     callback_data=f"mgr:toggle:{chat_id}",
                     style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
                 ),
                 InlineKeyboardButton(
-                    f"{marker('reactions_enabled')} {reactions_label}",
+                    setting("reactions_enabled", reactions_label),
                     callback_data=f"mgr:reactions:{chat_id}",
                     style=(
                         ButtonStyle.DANGER
@@ -537,30 +549,35 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    f"{marker('reply_chance')} Reply: {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
+                    setting(
+                        "reply_chance",
+                        f"Reply: {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
+                    ),
                     callback_data=f"mgr:reply-chance:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    f"{marker('reaction_chance')} React: {document.get('reaction_chance', 25)}%",
+                    setting(
+                        "reaction_chance",
+                        f"React: {document.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%",
+                    ),
                     callback_data=f"mgr:chance:{chat_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    f"{marker('cooldown_seconds')} {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
+                    setting(
+                        "cooldown_seconds",
+                        f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
+                    ),
                     callback_data=f"mgr:cooldown:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    f"{marker('rate_limit_per_minute')} {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
+                    setting(
+                        "rate_limit_per_minute",
+                        f"Rate: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
+                    ),
                     callback_data=f"mgr:rate:{chat_id}",
                 ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🌐 Global Options",
-                    callback_data=f"mgr:inherit:{chat_id}",
-                    style=ButtonStyle.PRIMARY,
-                )
             ],
             [
                 InlineKeyboardButton(
@@ -582,47 +599,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                     style=ButtonStyle.DANGER,
                 ),
                 InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}"),
-            ],
-        ]
-    )
-
-
-def local_global_options_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🌐 Enabled", callback_data=f"mgr:inherit-enabled:{chat_id}"),
-                InlineKeyboardButton(
-                    "🌐 Reply Chance", callback_data=f"mgr:inherit-reply_chance:{chat_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🌐 Reactions", callback_data=f"mgr:inherit-reactions_enabled:{chat_id}"
-                ),
-                InlineKeyboardButton(
-                    "🌐 React Chance", callback_data=f"mgr:inherit-reaction_chance:{chat_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🌐 Cooldown", callback_data=f"mgr:inherit-cooldown_seconds:{chat_id}"
-                ),
-                InlineKeyboardButton(
-                    "🌐 Rate", callback_data=f"mgr:inherit-rate_limit_per_minute:{chat_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🌐 Reset All",
-                    callback_data=f"mgr:inherit-all:{chat_id}",
-                    style=ButtonStyle.PRIMARY,
-                ),
-                InlineKeyboardButton(
-                    "⬅️ Manager",
-                    callback_data=f"mgr:open:{chat_id}",
-                    style=ButtonStyle.DANGER,
-                ),
             ],
         ]
     )
@@ -1053,50 +1029,48 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         if action == "toggle":
             document = await repository.get(chat_id)
-            await repository.set_enabled(chat_id, not document["enabled"])
+            value = next_local_option(document, "enabled", [False, True])
+            if value is None:
+                await repository.clear_local_config(chat_id, "enabled")
+            else:
+                await repository.set_enabled(chat_id, value)
         elif action == "reactions":
             document = await repository.get(chat_id)
-            await repository.set_reactions_enabled(
-                chat_id, not document.get("reactions_enabled", True)
-            )
+            value = next_local_option(document, "reactions_enabled", [False, True])
+            if value is None:
+                await repository.clear_local_config(chat_id, "reactions_enabled")
+            else:
+                await repository.set_reactions_enabled(chat_id, value)
         elif action == "chance":
             document = await repository.get(chat_id)
-            chance = (document.get("reaction_chance", 25) + 25) % 125
-            await repository.set_reaction_chance(chat_id, chance)
+            value = next_local_option(document, "reaction_chance", [0, 25, 50, 75, 100])
+            if value is None:
+                await repository.clear_local_config(chat_id, "reaction_chance")
+            else:
+                await repository.set_reaction_chance(chat_id, value)
         elif action == "reply-chance":
             document = await repository.get(chat_id)
-            chance = (document.get("reply_chance", DEFAULT_REPLY_CHANCE) + 25) % 125
-            await repository.set_reply_chance(chat_id, chance)
+            value = next_local_option(document, "reply_chance", [0, 25, 50, 75, 100])
+            if value is None:
+                await repository.clear_local_config(chat_id, "reply_chance")
+            else:
+                await repository.set_reply_chance(chat_id, value)
         elif action == "cooldown":
             document = await repository.get(chat_id)
-            await repository.set_cooldown(
-                chat_id,
-                next_option(
-                    document.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS),
-                    COOLDOWN_OPTIONS,
-                ),
-            )
+            value = next_local_option(document, "cooldown_seconds", COOLDOWN_OPTIONS)
+            if value is None:
+                await repository.clear_local_config(chat_id, "cooldown_seconds")
+            else:
+                await repository.set_cooldown(chat_id, value)
         elif action == "rate":
             document = await repository.get(chat_id)
-            await repository.set_rate_limit(
-                chat_id,
-                next_option(
-                    document.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
-                    RATE_LIMIT_OPTIONS,
-                ),
-            )
+            value = next_local_option(document, "rate_limit_per_minute", RATE_LIMIT_OPTIONS)
+            if value is None:
+                await repository.clear_local_config(chat_id, "rate_limit_per_minute")
+            else:
+                await repository.set_rate_limit(chat_id, value)
         elif action == "globals":
             await repository.toggle_global_replies(chat_id)
-        elif action == "inherit":
-            await query.message.edit_text(
-                "🌐 Global Options\n\nReset individual local overrides to the live global value.",
-                reply_markup=local_global_options_keyboard(chat_id),
-            )
-            await query.answer()
-            return
-        elif action.startswith("inherit-"):
-            name = action.removeprefix("inherit-")
-            await repository.clear_local_config(chat_id, None if name == "all" else name)
         elif action == "confirm-clear":
             await query.message.reply_text(
                 "🗑 Clear every local reply?",

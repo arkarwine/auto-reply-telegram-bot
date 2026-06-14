@@ -24,7 +24,6 @@ from autoreply.bot import (
     interaction_allowed,
     is_sudoer,
     link_keyboard,
-    local_global_options_keyboard,
     manager_keyboard,
     message_label,
     response_label,
@@ -38,6 +37,7 @@ from autoreply.bot import (
     start_image_file_id,
     truncate_label,
     next_option,
+    next_local_option,
     valid_link,
 )
 from autoreply.config import Settings
@@ -133,6 +133,14 @@ def test_interaction_cooldown_and_rate_limit() -> None:
 def test_next_option_cycles_manager_values() -> None:
     assert next_option(5, [0, 5, 15]) == 15
     assert next_option(15, [0, 5, 15]) == 0
+
+
+def test_local_option_cycles_back_to_global_after_last_value() -> None:
+    inherited = {"reply_chance": 50, "config_overrides": []}
+    local_last = {"reply_chance": 100, "config_overrides": ["reply_chance"]}
+
+    assert next_local_option(inherited, "reply_chance", [0, 25, 50, 75, 100]) == 75
+    assert next_local_option(local_last, "reply_chance", [0, 25, 50, 75, 100]) is None
 
 
 @pytest.mark.asyncio
@@ -450,34 +458,36 @@ def test_manager_keyboard_contains_private_controls() -> None:
 
     assert "➕ Add Reply" in labels
     assert "📚 Replies" in labels
-    assert "🌐 ▶️ Enable" in labels
-    assert "🌐 Reply: 75%" in labels
-    assert "🌐 React: 25%" in labels
-    assert "🌐 0s" in labels
-    assert "🌐 ∞/min" in labels
+    assert "🌐 Global: ▶️ Enable" in labels
+    assert "🌐 Global: Reply: 75%" in labels
+    assert "🌐 Global: React: 25%" in labels
+    assert "🌐 Global: Cooldown: 0s" in labels
+    assert "🌐 Global: Rate: ∞/min" in labels
     assert "🌐 Globals: On" in labels
-    assert "🌐 Global Options" in labels
+    assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
-    assert styles["🌐 ▶️ Enable"] == ButtonStyle.SUCCESS
+    assert styles["🌐 Global: ▶️ Enable"] == ButtonStyle.SUCCESS
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
 
 
-def test_local_global_options_cover_behavior_settings() -> None:
-    labels = [
-        button.text for row in local_global_options_keyboard(-100123).inline_keyboard for button in row
-    ]
+def test_manager_marks_local_override_directly_on_setting() -> None:
+    keyboard = manager_keyboard(
+        -100123,
+        {
+            "enabled": True,
+            "reactions_enabled": True,
+            "reply_chance": 75,
+            "reaction_chance": 25,
+            "cooldown_seconds": 10,
+            "rate_limit_per_minute": 0,
+            "global_replies_enabled": True,
+            "config_overrides": ["reply_chance"],
+        },
+    )
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert labels == [
-        "🌐 Enabled",
-        "🌐 Reply Chance",
-        "🌐 Reactions",
-        "🌐 React Chance",
-        "🌐 Cooldown",
-        "🌐 Rate",
-        "🌐 Reset All",
-        "⬅️ Manager",
-    ]
+    assert "🏠 Reply: 75%" in labels
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:

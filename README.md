@@ -82,8 +82,8 @@ global replies turned on, including groups without a saved local reply.
 The Global Defaults manager also configures the initial enabled state, reply
 chance, reaction settings, cooldown, and rate limit inherited live by groups.
 Global changes take effect immediately unless a group locally overrides that
-specific setting. Group admins can reset individual overrides or all behavior
-settings from **Global Options** in their manager.
+specific setting. Each behavior button cycles through local values and then a
+**Global** option that restores live inheritance for that setting.
 
 Owner and sudoers can use `/broadcast <text>` in private chat, or reply to any
 Telegram message with `/broadcast`, then confirm delivery to every known group.
