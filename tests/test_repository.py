@@ -81,13 +81,14 @@ def repository_with(document, global_responses=None) -> GroupRepository:
 
 
 @pytest.mark.asyncio
-async def test_new_group_defaults_to_enabled_with_unlimited_rate_and_no_cooldown() -> None:
+async def test_new_group_defaults_to_enabled_with_conservative_interactions() -> None:
     repository = repository_with(None)
 
     document = await repository.get(123)
 
     assert document["enabled"] is True
-    assert document["cooldown_seconds"] == 0
+    assert document["reply_chance"] == 50
+    assert document["cooldown_seconds"] == 10
     assert document["rate_limit_per_minute"] == 0
 
 
@@ -172,12 +173,12 @@ async def test_next_response_combines_local_and_global_replies() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reply_chance_defaults_to_100_for_enabled_existing_group() -> None:
+async def test_reply_chance_defaults_to_50_for_enabled_existing_group() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0}
     )
 
-    assert await repository.reply_chance(123) == 100
+    assert await repository.reply_chance(123) == 50
 
 
 @pytest.mark.asyncio

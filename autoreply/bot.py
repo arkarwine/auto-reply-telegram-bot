@@ -24,6 +24,7 @@ from autoreply.config import Settings
 from autoreply.repository import (
     DEFAULT_COOLDOWN_SECONDS,
     DEFAULT_RATE_LIMIT_PER_MINUTE,
+    DEFAULT_REPLY_CHANCE,
     GroupRepository,
     MAX_RESPONSES,
 )
@@ -86,7 +87,7 @@ BROADCAST_BATCH_SIZE = 20
 BROADCAST_BATCH_DELAY_SECONDS = 3
 REPLIES_PER_PAGE = 10
 REPLY_LABEL_LIMIT = 42
-COOLDOWN_OPTIONS = [0, 5, 15, 30, 60]
+COOLDOWN_OPTIONS = [0, 5, 10, 15, 30, 60]
 RATE_LIMIT_OPTIONS = [0, 5, 10, 20, 30]
 _last_interaction: dict[int, float] = {}
 _recent_interactions: dict[int, deque[float]] = defaultdict(deque)
@@ -533,7 +534,7 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    f"💬 Reply: {document.get('reply_chance', 100)}%",
+                    f"💬 Reply: {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
                     callback_data=f"mgr:reply-chance:{chat_id}",
                 ),
                 InlineKeyboardButton(
@@ -662,7 +663,7 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
         f"⚙️ {chat.title or chat_id}\n\n"
         f"{'🟢 Active' if document['enabled'] else '🔴 Paused'}  •  "
         f"📚 {local_count} local + {global_count} global\n"
-        f"💬 {document.get('reply_chance', 100)}%  •  "
+        f"💬 {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%  •  "
         f"🎲 {document.get('reaction_chance', 25)}%  •  "
         f"⏱ {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s  •  🚦 {rate}/min"
     )
@@ -961,7 +962,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await repository.set_reaction_chance(chat_id, chance)
         elif action == "reply-chance":
             document = await repository.get(chat_id)
-            chance = (document.get("reply_chance", 100) + 25) % 125
+            chance = (document.get("reply_chance", DEFAULT_REPLY_CHANCE) + 25) % 125
             await repository.set_reply_chance(chat_id, chance)
         elif action == "cooldown":
             document = await repository.get(chat_id)
@@ -1292,7 +1293,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             group_settings.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
         ):
             return
-        reply_chance = group_settings.get("reply_chance", 100)
+        reply_chance = group_settings.get("reply_chance", DEFAULT_REPLY_CHANCE)
         response = (
             await repository.next_response(message.chat.id)
             if chance_succeeds(reply_chance)

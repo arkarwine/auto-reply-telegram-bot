@@ -97,8 +97,10 @@ The private manager lets admins:
 - Enable or disable interactions.
 - Add any copyable Telegram message as a reply.
 - View, delete, or clear replies.
-- Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%.
-- Configure a group cooldown of 0, 5, 15, 30, or 60 seconds. The default is 0.
+- Cycle auto-reply chance between 0%, 25%, 50%, 75%, and 100%. The default is
+  50%.
+- Configure a group cooldown of 0, 5, 10, 15, 30, or 60 seconds. The default
+  is 10 seconds.
 - Configure a rate limit of unlimited, 5, 10, 20, or 30 interactions per minute.
   The default is unlimited.
 - Enable or disable reactions.
