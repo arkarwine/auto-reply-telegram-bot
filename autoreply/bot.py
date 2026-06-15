@@ -1,6 +1,7 @@
 import logging
 import random
 import asyncio
+from io import BytesIO
 from collections import defaultdict, deque
 from time import monotonic
 from collections.abc import Awaitable, Callable
@@ -52,6 +53,7 @@ SUDOER_BOT_COMMANDS = [
     BotCommand("owner_link", "👤 Set owner link"),
     BotCommand("global_defaults", "🌐 Manage global replies"),
     BotCommand("broadcast", "📣 Broadcast to groups"),
+    BotCommand("stats", "📊 Bot statistics"),
     BotCommand("start_img", "🖼 Set start image"),
 ]
 START_TEXT = (
@@ -72,6 +74,7 @@ SUDOER_HELP_TEXT = (
     f"{HELP_TEXT}\n\n"
     "🌐 /global_defaults — global replies\n"
     "📣 /broadcast — message every group\n"
+    "📊 /stats — usage statistics\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
 )
@@ -80,6 +83,7 @@ SUDOER_PANEL_TEXT = (
     "🌐 /global_defaults — global replies\n"
     "📣 /broadcast <text> — broadcast text\n"
     "📣 Reply with /broadcast — broadcast a message\n"
+    "📊 /stats — usage statistics\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
 )
@@ -458,9 +462,10 @@ async def broadcast_response(
     client: Client,
     repository: GroupRepository,
     response: object,
-) -> tuple[int, int]:
+    progress: Callable[[int, int, int, int], Awaitable[None]] | None = None,
+) -> tuple[int, list[str]]:
     sent = 0
-    failed = 0
+    errors = []
     group_ids = await repository.group_ids()
     for position, chat_id in enumerate(group_ids):
         try:
@@ -479,15 +484,38 @@ async def broadcast_response(
             else:
                 raise ValueError("Unsupported broadcast response")
             sent += 1
-        except (Forbidden, ChatAdminRequired):
-            failed += 1
+        except (Forbidden, ChatAdminRequired) as exc:
+            errors.append(f"{chat_id}: {type(exc).__name__}: {exc}")
             await repository.set_enabled(chat_id, False)
-        except RPCError:
-            failed += 1
+        except RPCError as exc:
+            errors.append(f"{chat_id}: {type(exc).__name__}: {exc}")
             LOGGER.exception("Could not broadcast to chat %s", chat_id)
+        processed = position + 1
+        if progress and (
+            processed % BROADCAST_BATCH_SIZE == 0 or processed == len(group_ids)
+        ):
+            await progress(processed, len(group_ids), sent, len(errors))
         if (position + 1) % BROADCAST_BATCH_SIZE == 0 and position + 1 < len(group_ids):
             await asyncio.sleep(BROADCAST_BATCH_DELAY_SECONDS)
-    return sent, failed
+    return sent, errors
+
+
+def broadcast_progress_text(processed: int, total: int, sent: int, failed: int) -> str:
+    percent = round(processed / total * 100) if total else 100
+    return (
+        f"📣 Broadcasting… {percent}%\n\n"
+        f"📬 Processed: {processed}/{total}\n"
+        f"✅ Sent: {sent}\n"
+        f"⚠️ Failed: {failed}"
+    )
+
+
+async def send_broadcast_errors(message: Message, errors: list[str]) -> None:
+    if not errors:
+        return
+    report = BytesIO(("\n".join(errors) + "\n").encode())
+    report.name = "broadcast_errors.txt"
+    await message.reply_document(report, caption=f"⚠️ {len(errors)} broadcast failures")
 
 
 async def is_group_admin(client: Client, message: Message) -> bool:
@@ -812,9 +840,25 @@ async def group_onboarding_content(
 
 
 def register_handlers(app: Client, repository: GroupRepository, settings: Settings) -> None:
-    @app.on_message(filters.group, group=-1)
-    async def record_group(_: Client, message: Message) -> None:
-        await repository.ensure_group(message.chat.id)
+    @app.on_message(filters.all, group=-1)
+    async def record_interaction(_: Client, message: Message) -> None:
+        if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            await repository.ensure_group(message.chat.id)
+        if message.from_user and not message.from_user.is_bot:
+            await repository.record_user(
+                message.from_user.id,
+                private=message.chat.type == ChatType.PRIVATE,
+            )
+
+    @app.on_callback_query(group=-1)
+    async def record_callback(_: Client, query: CallbackQuery) -> None:
+        if query.from_user and not query.from_user.is_bot:
+            await repository.record_user(query.from_user.id)
+
+    @app.on_inline_query(group=-1)
+    async def record_inline_query(_, query) -> None:
+        if query.from_user and not query.from_user.is_bot:
+            await repository.record_user(query.from_user.id)
 
     @app.on_message(filters.private & filters.command(["start", "help"]))
     async def private_help(client: Client, message: Message) -> None:
@@ -901,8 +945,21 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         text, keyboard = await global_manager_content(repository)
         await message.reply_text(text, reply_markup=keyboard)
 
+    @app.on_message(filters.private & filters.command("stats"))
+    async def stats_command(_: Client, message: Message) -> None:
+        if not is_sudoer(settings, message):
+            await message.reply_text("⛔ Sudoers only.")
+            return
+        stats = await repository.stats()
+        await message.reply_text(
+            "📊 Bot Statistics\n\n"
+            f"💬 Private chats: {stats['private_users']}\n"
+            f"👤 Unique users: {stats['users']}\n"
+            f"👥 Known groups: {stats['groups']}"
+        )
+
     @app.on_message(filters.private & filters.command("broadcast"))
-    async def broadcast_command(_: Client, message: Message) -> None:
+    async def broadcast_command(client: Client, message: Message) -> None:
         if not is_sudoer(settings, message):
             await message.reply_text("⛔ Sudoers only.")
             return
@@ -912,24 +969,25 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "📣 Usage:\n/broadcast <text>\n\nOr reply to any message with /broadcast."
             )
             return
-        await repository.set_pending_broadcast(message.from_user.id, response)
         group_count = len(await repository.group_ids())
-        await message.reply_text(
-            f"📣 Send this to {group_count} known groups?\n\n"
-            f"⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per {BROADCAST_BATCH_SIZE} groups",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "📣 Broadcast",
-                            callback_data="broadcast:send",
-                            style=ButtonStyle.SUCCESS,
-                        ),
-                        InlineKeyboardButton("✖️ Cancel", callback_data="broadcast:cancel"),
-                    ]
-                ]
-            ),
-        )
+        progress_message = await message.reply_text(broadcast_progress_text(0, group_count, 0, 0))
+
+        async def update_progress(processed: int, total: int, sent: int, failed: int) -> None:
+            try:
+                await progress_message.edit_text(
+                    broadcast_progress_text(processed, total, sent, failed)
+                )
+            except RPCError:
+                LOGGER.warning("Could not update broadcast progress")
+
+        sent, errors = await broadcast_response(client, repository, response, update_progress)
+        try:
+            await progress_message.edit_text(
+                f"✅ Broadcast complete\n\n📨 Sent: {sent}\n⚠️ Failed: {len(errors)}"
+            )
+        except RPCError:
+            LOGGER.warning("Could not update completed broadcast status")
+        await send_broadcast_errors(message, errors)
 
     @app.on_message(filters.private & filters.command(["updates", "support", "owner_link"]))
     async def link_command(_: Client, message: Message) -> None:
@@ -1290,32 +1348,6 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await query.message.edit_text(text, reply_markup=keyboard)
         await query.answer("✅ Updated")
 
-    @app.on_callback_query(filters.regex(r"^broadcast:"))
-    async def broadcast_callback(client: Client, query: CallbackQuery) -> None:
-        if not query.message or not query_is_sudoer(settings, query):
-            await query.answer("⛔ Sudoers only.", show_alert=True)
-            return
-        action = query.data.split(":", 1)[1]
-        if action == "cancel":
-            await repository.clear_capture_group(query.from_user.id)
-            await query.message.edit_text("✖️ Broadcast cancelled.")
-            await query.answer()
-            return
-        response = await repository.get_pending_broadcast(query.from_user.id)
-        if action != "send" or not response:
-            await query.answer("⚠️ Broadcast expired.", show_alert=True)
-            return
-        await query.answer("📣 Broadcasting…")
-        await query.message.edit_text(
-            f"📣 Broadcasting…\n\n⏱ {BROADCAST_BATCH_DELAY_SECONDS}s pause per "
-            f"{BROADCAST_BATCH_SIZE} groups"
-        )
-        sent, failed = await broadcast_response(client, repository, response)
-        await repository.clear_capture_group(query.from_user.id)
-        await query.message.edit_text(
-            f"✅ Broadcast complete\n\n📨 Sent: {sent}\n⚠️ Failed: {failed}"
-        )
-
     @app.on_message(filters.private & filters.command("cancel"))
     async def cancel_capture(_: Client, message: Message) -> None:
         if message.from_user:
@@ -1336,6 +1368,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "reaction",
                 "global_defaults",
                 "broadcast",
+                "stats",
                 "start_img",
             ]
         ),

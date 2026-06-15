@@ -27,6 +27,7 @@ class GroupRepository:
         self.collection = self.client[database_name]["groups"]
         self.settings_collection = self.client[database_name]["bot_settings"]
         self.states_collection = self.client[database_name]["user_states"]
+        self.users_collection = self.client[database_name]["users"]
 
     async def ping(self) -> None:
         await self.client.admin.command("ping")
@@ -124,6 +125,21 @@ class GroupRepository:
 
     async def group_ids(self) -> list[int]:
         return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
+
+    async def record_user(self, user_id: int, private: bool = False) -> None:
+        update: dict[str, Any] = {"$setOnInsert": {"private_interacted": False}}
+        if private:
+            update["$set"] = {"private_interacted": True}
+        await self.users_collection.update_one({"_id": user_id}, update, upsert=True)
+
+    async def stats(self) -> dict[str, int]:
+        return {
+            "private_users": await self.users_collection.count_documents(
+                {"private_interacted": True}
+            ),
+            "users": await self.users_collection.count_documents({}),
+            "groups": await self.collection.count_documents({}),
+        }
 
     async def add_response(self, chat_id: int, response: Any) -> str:
         document = await self.get(chat_id)

@@ -86,9 +86,14 @@ specific setting. Each behavior button cycles through local values and then a
 **Global** option that restores live inheritance for that setting.
 
 Owner and sudoers can use `/broadcast <text>` in private chat, or reply to any
-Telegram message with `/broadcast`, then confirm delivery to every known group.
-Broadcasts retry flood waits and report sent/failed totals. Delivery pauses for
-3 seconds after every batch of 20 groups.
+Telegram message with `/broadcast`, to immediately deliver it to every known
+group. The progress message updates after every batch. Broadcasts retry flood
+waits, pause for 3 seconds after every batch of 20 groups, and attach a text
+report containing any delivery errors.
+
+`/stats` shows unique private chats, users who interacted with the bot through
+messages, callbacks, groups, or inline mode, and known groups. Tracking begins
+after deploying this version.
 
 ## Private configuration
 

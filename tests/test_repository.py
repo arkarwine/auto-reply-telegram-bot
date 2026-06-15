@@ -278,3 +278,28 @@ async def test_remove_reaction_persists_default_reaction_list_without_invalid_va
     document = await repository.get(123)
 
     assert "👀" not in document["reactions"]
+
+
+@pytest.mark.asyncio
+async def test_stats_count_private_users_all_users_and_groups() -> None:
+    class CountingCollection:
+        def __init__(self, counts):
+            self.counts = counts
+
+        async def count_documents(self, query):
+            return self.counts.get(str(query), 0)
+
+    repository = GroupRepository.__new__(GroupRepository)
+    repository.users_collection = CountingCollection(
+        {
+            str({"private_interacted": True}): 4,
+            str({}): 10,
+        }
+    )
+    repository.collection = CountingCollection({str({}): 7})
+
+    assert await repository.stats() == {
+        "private_users": 4,
+        "users": 10,
+        "groups": 7,
+    }

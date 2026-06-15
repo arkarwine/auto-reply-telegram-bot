@@ -14,6 +14,7 @@ from autoreply.bot import (
     START_TEXT,
     broadcast_source,
     broadcast_response,
+    broadcast_progress_text,
     chance_succeeds,
     choose_reaction,
     command_argument,
@@ -32,6 +33,7 @@ from autoreply.bot import (
     register_bot_commands,
     retry_flood_wait,
     saved_reply_keyboard,
+    send_broadcast_errors,
     send_response,
     sudoer_panel_keyboard,
     start_image_file_id,
@@ -173,6 +175,7 @@ def test_public_bot_menu_hides_sudoer_commands() -> None:
         "owner_link",
         "global_defaults",
         "broadcast",
+        "stats",
         "start_img",
     }
 
@@ -241,7 +244,7 @@ async def test_broadcast_response_copies_to_every_known_group() -> None:
             {"kind": "message", "chat_id": 123, "message_id": 42},
         )
 
-    assert (sent, failed) == (21, 0)
+    assert (sent, failed) == (21, [])
     assert [call["chat_id"] for call in client.calls] == list(range(21))
     sleep.assert_awaited_once_with(3)
 
@@ -260,8 +263,53 @@ async def test_broadcast_response_sends_text_parameter() -> None:
             self.arguments = kwargs
 
     client = FakeClient()
-    assert await broadcast_response(client, FakeRepository(), "Hello groups") == (1, 0)
+    assert await broadcast_response(client, FakeRepository(), "Hello groups") == (1, [])
     assert client.arguments == {"chat_id": -1001, "text": "Hello groups"}
+
+
+@pytest.mark.asyncio
+async def test_broadcast_reports_progress_after_each_batch() -> None:
+    class FakeRepository:
+        async def group_ids(self):
+            return list(range(21))
+
+    class FakeClient:
+        async def send_message(self, **kwargs):
+            pass
+
+    progress = []
+
+    async def update(*values):
+        progress.append(values)
+
+    with patch("autoreply.bot.asyncio.sleep"):
+        await broadcast_response(FakeClient(), FakeRepository(), "hello", update)
+
+    assert progress == [(20, 21, 20, 0), (21, 21, 21, 0)]
+
+
+def test_broadcast_progress_text_handles_empty_group_list() -> None:
+    text = broadcast_progress_text(0, 0, 0, 0)
+
+    assert "100%" in text
+    assert "0/0" in text
+
+
+@pytest.mark.asyncio
+async def test_broadcast_errors_are_attached_as_text_file() -> None:
+    class FakeMessage:
+        async def reply_document(self, document, caption):
+            self.document = document
+            self.caption = caption
+
+    message = FakeMessage()
+    await send_broadcast_errors(message, ["-1001: Forbidden", "-1002: ChatAdminRequired"])
+
+    assert message.document.name == "broadcast_errors.txt"
+    assert message.document.getvalue().decode() == (
+        "-1001: Forbidden\n-1002: ChatAdminRequired\n"
+    )
+    assert message.caption == "⚠️ 2 broadcast failures"
 
 
 def test_response_label_preserves_existing_text_responses() -> None:
