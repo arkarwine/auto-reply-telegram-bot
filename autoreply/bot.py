@@ -28,7 +28,6 @@ from autoreply.repository import (
     DEFAULT_REACTION_CHANCE,
     DEFAULT_REPLY_CHANCE,
     GroupRepository,
-    MAX_RESPONSES,
 )
 
 
@@ -1414,7 +1413,6 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         replies = {
             "added": "✅ Reply saved.",
             "duplicate": "⚠️ Already saved.",
-            "full": f"⚠️ Reply limit reached ({MAX_RESPONSES}).",
         }
         if global_capture:
             replies["added"] = "✅ Global reply saved and live."

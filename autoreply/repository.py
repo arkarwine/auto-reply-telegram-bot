@@ -4,7 +4,6 @@ import random
 from pymongo import AsyncMongoClient
 
 
-MAX_RESPONSES = 100
 MAX_REACTIONS = 20
 DEFAULT_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀"]
 DEFAULT_REACTION_CHANCE = 25
@@ -147,8 +146,6 @@ class GroupRepository:
         responses = document["responses"]
         if response in responses:
             return "duplicate"
-        if len(responses) >= MAX_RESPONSES:
-            return "full"
 
         await self.collection.update_one(
             {"_id": chat_id},
@@ -261,8 +258,6 @@ class GroupRepository:
         responses = await self.get_global_responses()
         if response in responses:
             return "duplicate"
-        if len(responses) >= MAX_RESPONSES:
-            return "full"
         await self.settings_collection.update_one(
             {"_id": "global_responses"},
             {"$push": {"responses": response}},
