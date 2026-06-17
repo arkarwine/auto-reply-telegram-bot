@@ -60,19 +60,21 @@ def test_command_argument_supports_autoreply_action() -> None:
     assert command_argument(message) == "off"
 
 
-def test_broadcast_source_accepts_text_argument_or_replied_message() -> None:
+def test_broadcast_source_is_reply_based_with_flags() -> None:
     text_message = SimpleNamespace(text="/broadcast Hello groups", reply_to_message=None)
     replied_message = SimpleNamespace(
-        text="/broadcast",
+        text="/broadcast -user -copy",
         reply_to_message=SimpleNamespace(chat=SimpleNamespace(id=123), id=42),
     )
     empty_message = SimpleNamespace(text="/broadcast", reply_to_message=None)
 
-    assert broadcast_source(text_message) == "Hello groups"
+    assert broadcast_source(text_message) is None
     assert broadcast_source(replied_message) == {
         "kind": "message",
         "chat_id": 123,
         "message_id": 42,
+        "include_users": True,
+        "copy": True,
     }
     assert broadcast_source(empty_message) is None
 
@@ -221,7 +223,7 @@ def test_start_text_contains_setup_steps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_broadcast_response_copies_to_every_known_group() -> None:
+async def test_broadcast_response_forwards_to_every_known_group_by_default() -> None:
     class FakeRepository:
         async def group_ids(self):
             return list(range(21))
@@ -233,7 +235,7 @@ async def test_broadcast_response_copies_to_every_known_group() -> None:
         def __init__(self):
             self.calls = []
 
-        async def copy_message(self, **kwargs):
+        async def forward_messages(self, **kwargs):
             self.calls.append(kwargs)
 
     client = FakeClient()
@@ -241,30 +243,44 @@ async def test_broadcast_response_copies_to_every_known_group() -> None:
         sent, failed = await broadcast_response(
             client,
             FakeRepository(),
-            {"kind": "message", "chat_id": 123, "message_id": 42},
+            {"kind": "message", "chat_id": 123, "message_id": 42, "copy": False},
         )
 
     assert (sent, failed) == (21, [])
     assert [call["chat_id"] for call in client.calls] == list(range(21))
+    assert all(call["message_ids"] == 42 for call in client.calls)
     sleep.assert_awaited_once_with(3)
 
 
 @pytest.mark.asyncio
-async def test_broadcast_response_sends_text_parameter() -> None:
+async def test_broadcast_response_can_copy_to_groups_and_users() -> None:
     class FakeRepository:
         async def group_ids(self):
             return [-1001]
 
+        async def user_ids(self):
+            return [101, 102]
+
     class FakeClient:
         def __init__(self):
-            self.arguments = None
+            self.calls = []
 
-        async def send_message(self, **kwargs):
-            self.arguments = kwargs
+        async def copy_message(self, **kwargs):
+            self.calls.append(kwargs)
 
     client = FakeClient()
-    assert await broadcast_response(client, FakeRepository(), "Hello groups") == (1, [])
-    assert client.arguments == {"chat_id": -1001, "text": "Hello groups"}
+    assert await broadcast_response(
+        client,
+        FakeRepository(),
+        {
+            "kind": "message",
+            "chat_id": 123,
+            "message_id": 42,
+            "copy": True,
+            "include_users": True,
+        },
+    ) == (3, [])
+    assert [call["chat_id"] for call in client.calls] == [-1001, 101, 102]
 
 
 @pytest.mark.asyncio
@@ -274,7 +290,7 @@ async def test_broadcast_reports_progress_after_each_batch() -> None:
             return list(range(21))
 
     class FakeClient:
-        async def send_message(self, **kwargs):
+        async def forward_messages(self, **kwargs):
             pass
 
     progress = []
@@ -283,7 +299,12 @@ async def test_broadcast_reports_progress_after_each_batch() -> None:
         progress.append(values)
 
     with patch("autoreply.bot.asyncio.sleep"):
-        await broadcast_response(FakeClient(), FakeRepository(), "hello", update)
+        await broadcast_response(
+            FakeClient(),
+            FakeRepository(),
+            {"kind": "message", "chat_id": 123, "message_id": 42},
+            update,
+        )
 
     assert progress == [(20, 21, 20, 0), (21, 21, 21, 0)]
 
@@ -466,7 +487,7 @@ def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
 
     assert "🛡 Sudo Panel" not in regular_labels
     assert "🛡 Sudo Panel" in sudoer_labels
-    assert "/broadcast <text>" in SUDOER_PANEL_TEXT
+    assert "/broadcast -copy" in SUDOER_PANEL_TEXT
     sudoer_styles = {
         button.text: button.style for row in sudoer.inline_keyboard for button in row
     }

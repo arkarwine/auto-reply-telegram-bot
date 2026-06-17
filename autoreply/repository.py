@@ -125,6 +125,9 @@ class GroupRepository:
     async def group_ids(self) -> list[int]:
         return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
 
+    async def user_ids(self) -> list[int]:
+        return [document["_id"] async for document in self.users_collection.find({}, {"_id": 1})]
+
     async def record_user(self, user_id: int, private: bool = False) -> None:
         update: dict[str, Any] = {"$setOnInsert": {"private_interacted": False}}
         if private:

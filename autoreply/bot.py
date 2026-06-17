@@ -72,7 +72,7 @@ HELP_TEXT = (
 SUDOER_HELP_TEXT = (
     f"{HELP_TEXT}\n\n"
     "🌐 /global_defaults — global replies\n"
-    "📣 /broadcast — message every group\n"
+    "📣 /broadcast — broadcast a replied message\n"
     "📊 /stats — usage statistics\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
@@ -80,8 +80,9 @@ SUDOER_HELP_TEXT = (
 SUDOER_PANEL_TEXT = (
     "🛡 Sudo Panel\n\n"
     "🌐 /global_defaults — global replies\n"
-    "📣 /broadcast <text> — broadcast text\n"
-    "📣 Reply with /broadcast — broadcast a message\n"
+    "📣 Reply with /broadcast — forward to groups\n"
+    "📣 /broadcast -copy — send without forward header\n"
+    "👤 /broadcast -user — also send to users\n"
     "📊 /stats — usage statistics\n"
     "🖼 /start_img — start image\n"
     "🔗 /updates, /support, /owner_link — menu links"
@@ -104,15 +105,16 @@ def command_argument(message: Message) -> str:
 
 
 def broadcast_source(message: Message) -> object | None:
-    argument = command_argument(message)
-    if argument:
-        return argument
-    if message.reply_to_message:
-        return {
-            "kind": "message",
-            "chat_id": message.reply_to_message.chat.id,
-            "message_id": message.reply_to_message.id,
-        }
+    tokens = command_argument(message).split()
+    if not message.reply_to_message or any(token not in {"-user", "-copy"} for token in tokens):
+        return None
+    return {
+        "kind": "message",
+        "chat_id": message.reply_to_message.chat.id,
+        "message_id": message.reply_to_message.id,
+        "include_users": "-user" in tokens,
+        "copy": "-copy" in tokens,
+    }
     return None
 
 
@@ -463,16 +465,16 @@ async def broadcast_response(
     response: object,
     progress: Callable[[int, int, int, int], Awaitable[None]] | None = None,
 ) -> tuple[int, list[str]]:
+    if not isinstance(response, dict) or response.get("kind") != "message":
+        raise ValueError("Unsupported broadcast response")
     sent = 0
     errors = []
-    group_ids = await repository.group_ids()
-    for position, chat_id in enumerate(group_ids):
+    targets = [("group", chat_id) for chat_id in await repository.group_ids()]
+    if response.get("include_users"):
+        targets.extend(("user", user_id) for user_id in await repository.user_ids())
+    for position, (target_type, chat_id) in enumerate(targets):
         try:
-            if isinstance(response, str):
-                await retry_flood_wait(
-                    lambda chat_id=chat_id: client.send_message(chat_id=chat_id, text=response)
-                )
-            elif isinstance(response, dict) and response.get("kind") == "message":
+            if response.get("copy"):
                 await retry_flood_wait(
                     lambda chat_id=chat_id: client.copy_message(
                         chat_id=chat_id,
@@ -481,20 +483,27 @@ async def broadcast_response(
                     )
                 )
             else:
-                raise ValueError("Unsupported broadcast response")
+                await retry_flood_wait(
+                    lambda chat_id=chat_id: client.forward_messages(
+                        chat_id=chat_id,
+                        from_chat_id=response["chat_id"],
+                        message_ids=response["message_id"],
+                    )
+                )
             sent += 1
         except (Forbidden, ChatAdminRequired) as exc:
-            errors.append(f"{chat_id}: {type(exc).__name__}: {exc}")
-            await repository.set_enabled(chat_id, False)
+            errors.append(f"{target_type}:{chat_id}: {type(exc).__name__}: {exc}")
+            if target_type == "group":
+                await repository.set_enabled(chat_id, False)
         except RPCError as exc:
-            errors.append(f"{chat_id}: {type(exc).__name__}: {exc}")
+            errors.append(f"{target_type}:{chat_id}: {type(exc).__name__}: {exc}")
             LOGGER.exception("Could not broadcast to chat %s", chat_id)
         processed = position + 1
         if progress and (
-            processed % BROADCAST_BATCH_SIZE == 0 or processed == len(group_ids)
+            processed % BROADCAST_BATCH_SIZE == 0 or processed == len(targets)
         ):
-            await progress(processed, len(group_ids), sent, len(errors))
-        if (position + 1) % BROADCAST_BATCH_SIZE == 0 and position + 1 < len(group_ids):
+            await progress(processed, len(targets), sent, len(errors))
+        if (position + 1) % BROADCAST_BATCH_SIZE == 0 and position + 1 < len(targets):
             await asyncio.sleep(BROADCAST_BATCH_DELAY_SECONDS)
     return sent, errors
 
@@ -503,7 +512,7 @@ def broadcast_progress_text(processed: int, total: int, sent: int, failed: int) 
     percent = round(processed / total * 100) if total else 100
     return (
         f"📣 Broadcasting… {percent}%\n\n"
-        f"📬 Processed: {processed}/{total}\n"
+        f"📬 Targets: {processed}/{total}\n"
         f"✅ Sent: {sent}\n"
         f"⚠️ Failed: {failed}"
     )
@@ -916,8 +925,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             await show_callback_menu(
                 query.message,
                 "📣 Broadcast\n\n"
-                "/broadcast <text>\n"
-                "Or reply to any message with /broadcast.",
+                "Reply with /broadcast to forward.\n"
+                "Flags: -copy, -user",
                 InlineKeyboardMarkup(
                     [[
                         InlineKeyboardButton(
@@ -965,11 +974,14 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         response = broadcast_source(message)
         if response is None:
             await message.reply_text(
-                "📣 Usage:\n/broadcast <text>\n\nOr reply to any message with /broadcast."
+                "📣 Usage:\nReply to a message with /broadcast\n\n"
+                "Flags: -copy, -user"
             )
             return
-        group_count = len(await repository.group_ids())
-        progress_message = await message.reply_text(broadcast_progress_text(0, group_count, 0, 0))
+        target_count = len(await repository.group_ids())
+        if isinstance(response, dict) and response.get("include_users"):
+            target_count += len(await repository.user_ids())
+        progress_message = await message.reply_text(broadcast_progress_text(0, target_count, 0, 0))
 
         async def update_progress(processed: int, total: int, sent: int, failed: int) -> None:
             try:
