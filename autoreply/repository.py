@@ -68,6 +68,7 @@ class GroupRepository:
                     "keyword_responses": [],
                     "keyword_reactions": [],
                     "global_replies_enabled": True,
+                    "global_reactions_enabled": True,
                     "excluded_global_responses": [],
                     "reactions": DEFAULT_REACTIONS,
                     "config_overrides": [],
@@ -91,6 +92,7 @@ class GroupRepository:
             "cooldown_seconds": global_config["cooldown_seconds"],
             "rate_limit_per_minute": global_config["rate_limit_per_minute"],
             "global_replies_enabled": True,
+            "global_reactions_enabled": True,
             "excluded_global_responses": [],
             "reactions_enabled": global_config["reactions_enabled"],
             "reaction_chance": global_config["reaction_chance"],
@@ -179,6 +181,7 @@ class GroupRepository:
                     "cooldown_seconds": global_config["cooldown_seconds"],
                     "rate_limit_per_minute": global_config["rate_limit_per_minute"],
                     "global_replies_enabled": True,
+                    "global_reactions_enabled": True,
                     "excluded_global_responses": [],
                     "reactions_enabled": global_config["reactions_enabled"],
                     "reaction_chance": global_config["reaction_chance"],
@@ -208,6 +211,7 @@ class GroupRepository:
                     "responses": [],
                     "keyword_reactions": [],
                     "global_replies_enabled": True,
+                    "global_reactions_enabled": True,
                     "excluded_global_responses": [],
                     "reactions": DEFAULT_REACTIONS,
                     "config_overrides": [],
@@ -316,6 +320,16 @@ class GroupRepository:
         await self.collection.update_one(
             {"_id": chat_id},
             {"$set": {"global_replies_enabled": enabled}},
+            upsert=True,
+        )
+        return enabled
+
+    async def toggle_global_reactions(self, chat_id: int) -> bool:
+        document = await self.get(chat_id)
+        enabled = not document.get("global_reactions_enabled", True)
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"global_reactions_enabled": enabled}},
             upsert=True,
         )
         return enabled
@@ -481,7 +495,11 @@ class GroupRepository:
 
     async def add_reaction(self, chat_id: int, reaction: str) -> str:
         document = await self.get(chat_id)
-        reactions = list(document.get("reactions", DEFAULT_REACTIONS))
+        reactions = (
+            list(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else []
+        )
         if reaction in reactions:
             return "duplicate"
         if len(reactions) >= MAX_REACTIONS:
@@ -511,7 +529,11 @@ class GroupRepository:
 
     async def clear_reactions(self, chat_id: int) -> int:
         document = await self.get(chat_id)
-        count = len(document.get("reactions", DEFAULT_REACTIONS))
+        count = (
+            len(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else 0
+        )
         await self.set_local_config(chat_id, "reactions", [])
         return count
 
@@ -527,12 +549,22 @@ class GroupRepository:
 
     async def remove_reaction(self, chat_id: int, reaction: str) -> bool:
         document = await self.get(chat_id)
-        reactions = list(document.get("reactions", DEFAULT_REACTIONS))
-        if reaction not in reactions:
-            return False
-        reactions.remove(reaction)
-        await self.set_local_config(chat_id, "reactions", reactions)
-        return True
+        local_reactions = (
+            list(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else []
+        )
+        if reaction in local_reactions:
+            local_reactions.remove(reaction)
+            await self.set_local_config(chat_id, "reactions", local_reactions)
+            return True
+
+        global_reactions = list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+        if reaction in global_reactions:
+            global_reactions.remove(reaction)
+            await self.set_global_config("reactions", global_reactions)
+            return True
+        return False
 
     async def reaction_settings(self, chat_id: int) -> tuple[int, list[str]] | None:
         document = await self.get(chat_id)
@@ -542,16 +574,31 @@ class GroupRepository:
             or not document.get("reactions_enabled", True)
         ):
             return None
+        local_reactions = (
+            list(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else []
+        )
+        global_reactions = (
+            list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+            if document.get("global_reactions_enabled", True)
+            else []
+        )
+        reactions = list(dict.fromkeys([*local_reactions, *global_reactions]))
         return (
             document.get("reaction_chance", DEFAULT_REACTION_CHANCE),
-            document.get("reactions", DEFAULT_REACTIONS),
+            reactions,
         )
 
     async def keyword_reaction(self, chat_id: int, text: str) -> str | None:
         document = await self.get(chat_id)
         if not document["enabled"] or document.get("reply_mode") != "keyword":
             return None
-        global_reactions = await self.get_global_keyword_reactions()
+        global_reactions = (
+            await self.get_global_keyword_reactions()
+            if document.get("global_reactions_enabled", True)
+            else []
+        )
         matched = [
             entry["reaction"]
             for entry in [*document.get("keyword_reactions", []), *global_reactions]

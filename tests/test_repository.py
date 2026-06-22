@@ -347,6 +347,58 @@ async def test_keyword_mode_uses_separate_global_keyword_reactions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reactions_are_inherited_until_disabled() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reactions": ["local"],
+            "config_overrides": ["reactions"],
+        },
+        global_config={"reactions": ["global"]},
+    )
+
+    assert await repository.reaction_settings(123) == (25, ["local", "global"])
+
+    await repository.toggle_global_reactions(123)
+
+    assert await repository.reaction_settings(123) == (25, ["local"])
+
+
+@pytest.mark.asyncio
+async def test_keyword_global_reactions_are_inherited_until_disabled() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
+            "keyword_reactions": [],
+        }
+    )
+
+    assert await repository.add_global_keyword_reaction(["win"], "🎉") == "added"
+    assert await repository.keyword_reaction(123, "big win") == "🎉"
+
+    await repository.toggle_global_reactions(123)
+
+    assert await repository.keyword_reaction(123, "big win") is None
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_does_not_copy_inherited_global_reactions() -> None:
+    repository = repository_with(
+        {"_id": 123, "enabled": True, "config_overrides": []},
+        global_config={"reactions": ["global"]},
+    )
+
+    assert await repository.add_reaction(123, "local") == "added"
+
+    assert repository.collection.document["reactions"] == ["local"]
+    assert await repository.reaction_settings(123) == (25, ["local", "global"])
+
+
+@pytest.mark.asyncio
 async def test_reply_chance_defaults_to_50_for_enabled_existing_group() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0}

@@ -367,6 +367,47 @@ async def test_reply_list_shows_ten_truncated_items_with_preview_actions() -> No
 
 
 @pytest.mark.asyncio
+async def test_reply_list_respects_global_replies_toggle() -> None:
+    class FakeRepository:
+        async def get(self, chat_id):
+            return {
+                "responses": ["local"],
+                "global_replies_enabled": False,
+                "excluded_global_responses": [],
+            }
+
+        async def get_global_responses(self):
+            return ["global"]
+
+    text, _ = await reply_list_content(SimpleNamespace(), FakeRepository(), -100123, 0)
+
+    assert "L1. local" in text
+    assert "global" not in text
+
+
+@pytest.mark.asyncio
+async def test_reply_list_shows_inherited_keyword_global_replies() -> None:
+    class FakeRepository:
+        async def get(self, chat_id):
+            return {
+                "reply_mode": "keyword",
+                "keyword_responses": [{"keywords": ["local"], "response": "local reply"}],
+                "global_replies_enabled": True,
+                "excluded_global_responses": [],
+            }
+
+        async def get_global_keyword_responses(self):
+            return [{"keywords": ["global"], "response": "global reply"}]
+
+    text, keyboard = await reply_list_content(SimpleNamespace(), FakeRepository(), -100123, 0)
+
+    assert "K1. local -> local reply" in text
+    assert "G1. global -> global reply" in text
+    assert [button.text for button in keyboard.inline_keyboard[1]] == ["👁 G1"]
+    assert keyboard.inline_keyboard[1][0].callback_data == "mgr:preview-gk-1-0:-100123"
+
+
+@pytest.mark.asyncio
 async def test_global_reply_list_has_preview_next_to_delete() -> None:
     class FakeRepository:
         async def get_global_config(self):
@@ -543,14 +584,14 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "Cooldown: Global" in labels
     assert "Rate: Global" in labels
     assert "🌐 Global Replies: On" in labels
-    assert "Global Reactions: Global" in labels
+    assert "🌐 Global Reactions: On" in labels
     assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Replies"] == ButtonStyle.SUCCESS
     assert styles["➕ Add Reactions"] == ButtonStyle.SUCCESS
     assert styles["🌐 Status: Global"] == ButtonStyle.DEFAULT
     assert styles["🌐 Global Replies: On"] == ButtonStyle.DEFAULT
-    assert styles["Global Reactions: Global"] == ButtonStyle.DEFAULT
+    assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
     assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
@@ -564,6 +605,7 @@ def test_manager_keyboard_hides_random_controls_when_inheriting_keyword_mode() -
             "enabled": True,
             "reactions_enabled": True,
             "global_replies_enabled": True,
+            "global_reactions_enabled": True,
             "config_overrides": [],
         },
     )
@@ -574,6 +616,8 @@ def test_manager_keyboard_hides_random_controls_when_inheriting_keyword_mode() -
     assert "📚 Replies" in labels
     assert "➕ Add Reactions" in labels
     assert "🎭 Reactions" in labels
+    assert "🌐 Global Replies: On" in labels
+    assert "🌐 Global Reactions: On" in labels
     assert "Reply: Global" not in labels
     assert "React: Global" not in labels
     assert "Cooldown: Global" not in labels
@@ -597,6 +641,27 @@ def test_manager_marks_local_override_directly_on_setting() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert "Reply: 75%" in labels
+
+
+def test_manager_keyboard_shows_global_reaction_toggle_state() -> None:
+    keyboard = manager_keyboard(
+        -100123,
+        {
+            "enabled": True,
+            "reactions_enabled": True,
+            "reply_chance": 75,
+            "reaction_chance": 25,
+            "cooldown_seconds": 10,
+            "rate_limit_per_minute": 0,
+            "global_replies_enabled": False,
+            "global_reactions_enabled": False,
+            "config_overrides": [],
+        },
+    )
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert "🌐 Global Replies: Off" in labels
+    assert "🌐 Global Reactions: Off" in labels
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:

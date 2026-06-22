@@ -381,13 +381,19 @@ async def reply_list_content(
     document = await repository.get(chat_id)
     keyword_mode = document.get("reply_mode") == "keyword"
     local_responses = document.get("keyword_responses", []) if keyword_mode else document["responses"]
-    global_responses = await repository.get_global_responses()
+    global_responses = (
+        await repository.get_global_keyword_responses()
+        if keyword_mode
+        else await repository.get_global_responses()
+    ) if document.get("global_replies_enabled", True) else []
     combined = [
         ("keyword" if keyword_mode else "local", index, response)
         for index, response in enumerate(local_responses, 1)
     ]
-    if not keyword_mode:
-        combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
+    combined += [
+        ("global-keyword" if keyword_mode else "global", index, response)
+        for index, response in enumerate(global_responses, 1)
+    ]
     page_count = max(1, (len(combined) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
     page = max(0, min(page, page_count - 1))
     page_items = combined[page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE]
@@ -395,7 +401,7 @@ async def reply_list_content(
     lines = []
     buttons = []
     for source, index, response in page_items:
-        stored_response = keyword_response(response) if source == "keyword" else response
+        stored_response = keyword_response(response) if source.endswith("keyword") else response
         label = truncate_label(await display_response_label(client, stored_response))
         if source in {"local", "keyword"}:
             prefix = "K" if source == "keyword" else "L"
@@ -420,20 +426,29 @@ async def reply_list_content(
                 ]
             )
         else:
+            if source == "global-keyword":
+                label = f"{keyword_entry_label(response)} -> {label}"
             is_excluded = response in excluded
             lines.append(f"G{index}. {label}{' (excluded)' if is_excluded else ''}")
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        f"👁 G{index}", callback_data=f"mgr:preview-g-{index}-{page}:{chat_id}"
+            row = [
+                InlineKeyboardButton(
+                    f"👁 G{index}",
+                    callback_data=(
+                        f"mgr:preview-gk-{index}-{page}:{chat_id}"
+                        if source == "global-keyword"
+                        else f"mgr:preview-g-{index}-{page}:{chat_id}"
                     ),
+                )
+            ]
+            if source == "global":
+                row.append(
                     InlineKeyboardButton(
                         f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
                         callback_data=f"mgr:exclude-{index}-{page}:{chat_id}",
                         style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
-                    ),
-                ]
-            )
+                    )
+                )
+            buttons.append(row)
     text = (
         f"📚 Replies • {page + 1}/{page_count}\n\n" + "\n".join(lines)
         if lines
@@ -523,15 +538,40 @@ async def reaction_list_content(
 ) -> tuple[str, InlineKeyboardMarkup]:
     document = await repository.get(chat_id)
     keyword_mode = document.get("reply_mode") == "keyword"
+    global_reactions_enabled = document.get("global_reactions_enabled", True)
     if keyword_mode:
-        entries = document.get("keyword_reactions", [])
+        local_entries = document.get("keyword_reactions", [])
+        global_entries = (
+            await repository.get_global_keyword_reactions()
+            if global_reactions_enabled
+            else []
+        )
         lines = [
             f"{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
-            for index, entry in enumerate(entries, 1)
+            for index, entry in enumerate(local_entries, 1)
         ]
+        offset = len(lines)
+        lines.extend(
+            f"{index}. 🌐 {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
+            for index, entry in enumerate(global_entries, offset + 1)
+        )
     else:
-        entries = document.get("reactions", [])
-        lines = [f"{index}. {reaction}" for index, reaction in enumerate(entries, 1)]
+        local_entries = (
+            list(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else []
+        )
+        global_entries = (
+            list((await repository.get_global_config()).get("reactions", []))
+            if global_reactions_enabled
+            else []
+        )
+        lines = [f"{index}. {reaction}" for index, reaction in enumerate(local_entries, 1)]
+        offset = len(lines)
+        lines.extend(
+            f"{index}. 🌐 {reaction}"
+            for index, reaction in enumerate(global_entries, offset + 1)
+        )
     text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
     return (
         text[:4096],
@@ -688,9 +728,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     enabled_label = "⏸ Enabled" if document["enabled"] else "▶️ Disabled"
     if "enabled" not in overrides:
         enabled_label = "🌐 Status: Global"
-    reactions_label = f"Global Reactions: {'On' if document.get('reactions_enabled', True) else 'Off'}"
-    if "reactions_enabled" not in overrides:
-        reactions_label = "Global Reactions: Global"
     setting = lambda name, label: label if name in overrides else f"{label.split(':', 1)[0]}: Global"
     rows = [
         [
@@ -721,7 +758,9 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 callback_data=f"mgr:globals:{chat_id}",
             ),
             InlineKeyboardButton(
-                reactions_label,
+                "🌐 Global Reactions: On"
+                if document.get("global_reactions_enabled", True)
+                else "🌐 Global Reactions: Off",
                 callback_data=f"mgr:reactions:{chat_id}",
             ),
         ],
@@ -987,13 +1026,30 @@ async def manager_content(client: Client, repository: GroupRepository, chat_id: 
     keyword_mode = document.get("reply_mode") == "keyword"
     local_count = len(document.get("keyword_responses", [])) if keyword_mode else len(document["responses"])
     keyword_reaction_count = len(document.get("keyword_reactions", []))
-    global_count = len(await repository.get_global_responses())
+    if keyword_mode:
+        global_count = (
+            len(await repository.get_global_keyword_responses())
+            if document.get("global_replies_enabled", True)
+            else 0
+        )
+        global_reaction_count = (
+            len(await repository.get_global_keyword_reactions())
+            if document.get("global_reactions_enabled", True)
+            else 0
+        )
+    else:
+        global_count = (
+            len(await repository.get_global_responses())
+            if document.get("global_replies_enabled", True)
+            else 0
+        )
     rate = document.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE) or "∞"
     if keyword_mode:
         text = (
             f"⚙️ {chat.title or chat_id}\n\n"
             f"{'🟢 Active' if document['enabled'] else '🔴 Paused'}  •  🎯 Keyword mode\n"
-            f"📚 {local_count} keyword replies  •  🎭 {keyword_reaction_count} keyword reactions\n"
+            f"📚 {local_count} local + {global_count} global replies  •  "
+            f"🎭 {keyword_reaction_count} local + {global_reaction_count} global reactions\n"
             "Only matching keywords reply or react. Cooldown, chance, and rate limits are skipped in this mode."
         )
         return text, manager_keyboard(chat_id, document)
@@ -1372,12 +1428,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             else:
                 await repository.set_enabled(chat_id, value)
         elif action == "reactions":
-            document = await repository.get(chat_id)
-            value = next_local_option(document, "reactions_enabled", [False, True])
-            if value is None:
-                await repository.clear_local_config(chat_id, "reactions_enabled")
-            else:
-                await repository.set_reactions_enabled(chat_id, value)
+            await repository.toggle_global_reactions(chat_id)
         elif action == "chance":
             document = await repository.get(chat_id)
             value = next_local_option(document, "reaction_chance", [0, 25, 50, 75, 100])
@@ -1485,6 +1536,9 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 if source == "k":
                     entry = (await repository.get(chat_id)).get("keyword_responses", [])[index - 1]
                     response = keyword_response(entry)
+                elif source == "gk":
+                    entry = (await repository.get_global_keyword_responses())[index - 1]
+                    response = keyword_response(entry)
                 else:
                     responses = (
                         (await repository.get(chat_id))["responses"]
@@ -1502,12 +1556,18 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 f"{source.upper()}{index}",
                 preview_keyboard(
                     f"mgr:list-{page}:{chat_id}",
-                    "🗑 Delete" if source in {"l", "k"} else "🚫 Exclude",
+                    "🗑 Delete"
+                    if source in {"l", "k"}
+                    else "🌐 Global Reply"
+                    if source == "gk"
+                    else "🚫 Exclude",
                     (
                         f"mgr:delete-keyword-{index}-{page}:{chat_id}"
                         if source == "k"
                         else f"mgr:delete-{index}-{page}:{chat_id}"
                         if source == "l"
+                        else f"mgr:list-{page}:{chat_id}"
+                        if source == "gk"
                         else f"mgr:exclude-{index}-{page}:{chat_id}"
                     ),
                 ),
