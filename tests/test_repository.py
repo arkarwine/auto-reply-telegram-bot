@@ -303,3 +303,32 @@ async def test_stats_count_private_users_all_users_and_groups() -> None:
         "users": 10,
         "groups": 7,
     }
+
+
+@pytest.mark.asyncio
+async def test_record_private_user_does_not_conflict_with_insert_defaults() -> None:
+    class RecordingCollection:
+        def __init__(self):
+            self.calls = []
+
+        async def update_one(self, query, update, upsert=False):
+            self.calls.append((query, update, upsert))
+
+    repository = GroupRepository.__new__(GroupRepository)
+    repository.users_collection = RecordingCollection()
+
+    await repository.record_user(123, private=True)
+    await repository.record_user(456, private=False)
+
+    assert repository.users_collection.calls == [
+        (
+            {"_id": 123},
+            {"$set": {"private_interacted": True}},
+            True,
+        ),
+        (
+            {"_id": 456},
+            {"$setOnInsert": {"private_interacted": False}},
+            True,
+        ),
+    ]

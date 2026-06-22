@@ -129,9 +129,11 @@ class GroupRepository:
         return [document["_id"] async for document in self.users_collection.find({}, {"_id": 1})]
 
     async def record_user(self, user_id: int, private: bool = False) -> None:
-        update: dict[str, Any] = {"$setOnInsert": {"private_interacted": False}}
-        if private:
-            update["$set"] = {"private_interacted": True}
+        update: dict[str, Any] = (
+            {"$set": {"private_interacted": True}}
+            if private
+            else {"$setOnInsert": {"private_interacted": False}}
+        )
         await self.users_collection.update_one({"_id": user_id}, update, upsert=True)
 
     async def stats(self) -> dict[str, int]:
