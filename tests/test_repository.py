@@ -259,6 +259,7 @@ async def test_keyword_mode_only_returns_matching_keyword_reply() -> None:
             "_id": 123,
             "enabled": True,
             "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
             "responses": ["random"],
             "keyword_responses": [
                 {"keywords": ["hello", "hi"], "response": "matched"},
@@ -280,6 +281,7 @@ async def test_keyword_reaction_uses_separate_keyword_store() -> None:
             "_id": 123,
             "enabled": True,
             "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
             "keyword_reactions": [{"keywords": ["win"], "reaction": "🎉"}],
             "reactions": ["👍"],
         }

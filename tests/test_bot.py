@@ -143,7 +143,7 @@ def test_local_option_cycles_back_to_global_after_last_value() -> None:
     inherited = {"reply_chance": 50, "config_overrides": []}
     local_last = {"reply_chance": 100, "config_overrides": ["reply_chance"]}
 
-    assert next_local_option(inherited, "reply_chance", [0, 25, 50, 75, 100]) == 75
+    assert next_local_option(inherited, "reply_chance", [0, 25, 50, 75, 100]) == 0
     assert next_local_option(local_last, "reply_chance", [0, 25, 50, 75, 100]) is None
 
 
@@ -527,27 +527,27 @@ def test_manager_keyboard_contains_private_controls() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels[:5] == [
-        "🎲 Mode: Random",
+        "🌐 Mode: Global",
         "➕ Add Replies",
         "📚 Replies",
         "➕ Add Reactions",
         "🎭 Reactions",
     ]
     assert "📚 Replies" in labels
-    assert "🌐 Global: ▶️ Enable" in labels
-    assert "🌐 Global: Reply: 75%" in labels
-    assert "🌐 Global: React: 25%" in labels
-    assert "🌐 Global: Cooldown: 0s" in labels
-    assert "🌐 Global: Rate: ∞/min" in labels
+    assert "🌐 Status: Global" in labels
+    assert "Reply: Global" in labels
+    assert "React: Global" in labels
+    assert "Cooldown: Global" in labels
+    assert "Rate: Global" in labels
     assert "🌐 Global Replies: On" in labels
-    assert "🌐 Global Reactions: On" in labels
+    assert "Global Reactions: Global" in labels
     assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Replies"] == ButtonStyle.SUCCESS
     assert styles["➕ Add Reactions"] == ButtonStyle.SUCCESS
-    assert styles["🌐 Global: ▶️ Enable"] == ButtonStyle.SUCCESS
+    assert styles["🌐 Status: Global"] == ButtonStyle.DEFAULT
     assert styles["🌐 Global Replies: On"] == ButtonStyle.DEFAULT
-    assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
+    assert styles["Global Reactions: Global"] == ButtonStyle.DEFAULT
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
     assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
@@ -569,7 +569,7 @@ def test_manager_marks_local_override_directly_on_setting() -> None:
     )
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert "🏠 Reply: 75%" in labels
+    assert "Reply: 75%" in labels
 
 
 def test_saved_reply_keyboard_contains_follow_up_actions() -> None:

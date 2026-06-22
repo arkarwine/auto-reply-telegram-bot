@@ -142,7 +142,9 @@ def next_option(current: int, options: list[int]) -> int:
 
 def next_local_option(document: dict, name: str, options: list) -> object | None:
     current = document[name]
-    if name in document.get("config_overrides", []) and current == options[-1]:
+    if name not in document.get("config_overrides", []):
+        return options[0]
+    if current == options[-1]:
         return None
     try:
         return options[(options.index(current) + 1) % len(options)]
@@ -656,18 +658,25 @@ async def delete_later(*messages: Message) -> None:
 
 def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     overrides = set(document.get("config_overrides", []))
-    setting = lambda name, value: (
-        f"🏠 {value}" if name in overrides else f"🌐 Global: {value}"
-    )
-    global_setting = lambda name, value: (
-        f"🏠 {value}" if name in overrides else f"🌐 {value}"
-    )
     keyword_mode = document.get("reply_mode") == "keyword"
-    enabled_label = "⏸ Disable" if document["enabled"] else "▶️ Enable"
+    mode_label = (
+        "🎯 Mode: Keyword"
+        if keyword_mode
+        else "🎲 Mode: Random"
+    )
+    if "reply_mode" not in overrides:
+        mode_label = "🌐 Mode: Global"
+    enabled_label = "⏸ Enabled" if document["enabled"] else "▶️ Disabled"
+    if "enabled" not in overrides:
+        enabled_label = "🌐 Status: Global"
+    reactions_label = f"Global Reactions: {'On' if document.get('reactions_enabled', True) else 'Off'}"
+    if "reactions_enabled" not in overrides:
+        reactions_label = "Global Reactions: Global"
+    setting = lambda name, label: label if name in overrides else f"{label.split(':', 1)[0]}: Global"
     rows = [
         [
             InlineKeyboardButton(
-                "🎯 Mode: Keyword" if keyword_mode else "🎲 Mode: Random",
+                mode_label,
                 callback_data=f"mgr:mode:{chat_id}",
             )
         ],
@@ -693,18 +702,21 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 callback_data=f"mgr:globals:{chat_id}",
             ),
             InlineKeyboardButton(
-                global_setting(
-                    "reactions_enabled",
-                    f"Global Reactions: {'On' if document.get('reactions_enabled', True) else 'Off'}",
-                ),
+                reactions_label,
                 callback_data=f"mgr:reactions:{chat_id}",
             ),
         ],
         [
             InlineKeyboardButton(
-                setting("enabled", enabled_label),
+                enabled_label,
                 callback_data=f"mgr:toggle:{chat_id}",
-                style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
+                style=(
+                    ButtonStyle.DANGER
+                    if "enabled" in overrides and document["enabled"]
+                    else ButtonStyle.SUCCESS
+                    if "enabled" in overrides
+                    else ButtonStyle.DEFAULT
+                ),
             ),
         ],
     ]
@@ -1354,10 +1366,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         elif action == "mode":
             document = await repository.get(chat_id)
-            await repository.set_reply_mode(
-                chat_id,
-                "random" if document.get("reply_mode") == "keyword" else "keyword",
-            )
+            value = next_local_option(document, "reply_mode", ["random", "keyword"])
+            if value is None:
+                await repository.clear_local_config(chat_id, "reply_mode")
+            else:
+                await repository.set_reply_mode(chat_id, value)
         elif action == "reaction-list":
             text, keyboard = await reaction_list_content(repository, chat_id)
             await query.message.edit_text(text, reply_markup=keyboard)

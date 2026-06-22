@@ -104,8 +104,6 @@ class GroupRepository:
         # Preserve disabled legacy groups, including groups disabled after permission errors.
         if document.get("enabled") is False:
             overrides.add("enabled")
-        if document.get("reply_mode"):
-            overrides.add("reply_mode")
         effective = defaults | {
             key: value for key, value in document.items() if key not in GLOBAL_CONFIG_KEYS
         }
