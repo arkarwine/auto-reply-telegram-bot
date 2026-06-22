@@ -533,12 +533,17 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "🌐 Global: React: 25%" in labels
     assert "🌐 Global: Cooldown: 0s" in labels
     assert "🌐 Global: Rate: ∞/min" in labels
-    assert "🌐 Globals: On" in labels
+    assert "🌐 Global Replies: On" in labels
+    assert "🌐 Global Reactions: On" in labels
     assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
     assert styles["🌐 Global: ▶️ Enable"] == ButtonStyle.SUCCESS
+    assert styles["🌐 Global Replies: On"] == ButtonStyle.DEFAULT
+    assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
     assert styles["🗑 Clear Replies"] == ButtonStyle.DANGER
+    assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
+    assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
 
 
 def test_manager_marks_local_override_directly_on_setting() -> None:
@@ -576,13 +581,17 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
         "➕ Add Global",
         "🌐 Replies",
         "⏸ New Groups: Off",
-        "🎭 Reactions: On",
+        "🌐 Global Reactions: On",
         "💬 Reply: 50%",
         "🎲 React: 25%",
         "⏱ 10s",
         "🚦 ∞/min",
         "🗑 Clear Globals",
+        "🔄 Refresh",
     ]
+    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
+    assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
+    assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
 
 
 @pytest.mark.asyncio

@@ -129,6 +129,7 @@ The private manager lets admins:
   used in keyword mode.
 - Delete replies for the current mode with `/delete_replies`, or delete both
   random and keyword replies with `/delete_all_replies`.
+- Clear the current mode's reaction list from the private manager.
 Replies are selected randomly from the group's local replies and its allowed
 global replies. Reply lists show 10 truncated entries per page and stay in one
 editable menu while previewing, deleting, excluding, or changing pages.

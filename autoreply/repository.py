@@ -426,6 +426,26 @@ class GroupRepository:
         )
         return "added"
 
+    async def clear_reactions(self, chat_id: int) -> int:
+        document = await self.get(chat_id)
+        count = len(document.get("reactions", DEFAULT_REACTIONS))
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"reactions": []}},
+            upsert=True,
+        )
+        return count
+
+    async def clear_keyword_reactions(self, chat_id: int) -> int:
+        document = await self.get(chat_id)
+        count = len(document.get("keyword_reactions", []))
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"keyword_reactions": []}},
+            upsert=True,
+        )
+        return count
+
     async def remove_reaction(self, chat_id: int, reaction: str) -> bool:
         document = await self.get(chat_id)
         reactions = list(document.get("reactions", DEFAULT_REACTIONS))
