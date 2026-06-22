@@ -1,8 +1,7 @@
-from typing import Any
 import random
+from typing import Any
 
 from pymongo import AsyncMongoClient
-
 
 MAX_REACTIONS = 20
 DEFAULT_REACTIONS = ["👍", "❤️", "😂", "🎉", "👀"]
@@ -70,6 +69,7 @@ class GroupRepository:
                     "global_replies_enabled": True,
                     "global_reactions_enabled": True,
                     "excluded_global_responses": [],
+                    "excluded_global_reactions": [],
                     "reactions": DEFAULT_REACTIONS,
                     "config_overrides": [],
                 }
@@ -94,6 +94,7 @@ class GroupRepository:
             "global_replies_enabled": True,
             "global_reactions_enabled": True,
             "excluded_global_responses": [],
+            "excluded_global_reactions": [],
             "reactions_enabled": global_config["reactions_enabled"],
             "reaction_chance": global_config["reaction_chance"],
             "reactions": list(global_config.get("reactions", DEFAULT_REACTIONS)),
@@ -106,7 +107,9 @@ class GroupRepository:
         if document.get("enabled") is False:
             overrides.add("enabled")
         effective = defaults | {
-            key: value for key, value in document.items() if key not in GLOBAL_CONFIG_KEYS
+            key: value
+            for key, value in document.items()
+            if key not in GLOBAL_CONFIG_KEYS
         }
         for key in overrides:
             if key in document:
@@ -141,10 +144,15 @@ class GroupRepository:
         await self.set_local_config(chat_id, "reply_mode", mode)
 
     async def group_ids(self) -> list[int]:
-        return [document["_id"] async for document in self.collection.find({}, {"_id": 1})]
+        return [
+            document["_id"] async for document in self.collection.find({}, {"_id": 1})
+        ]
 
     async def user_ids(self) -> list[int]:
-        return [document["_id"] async for document in self.users_collection.find({}, {"_id": 1})]
+        return [
+            document["_id"]
+            async for document in self.users_collection.find({}, {"_id": 1})
+        ]
 
     async def record_user(self, user_id: int, private: bool = False) -> None:
         update: dict[str, Any] = (
@@ -183,6 +191,7 @@ class GroupRepository:
                     "global_replies_enabled": True,
                     "global_reactions_enabled": True,
                     "excluded_global_responses": [],
+                    "excluded_global_reactions": [],
                     "reactions_enabled": global_config["reactions_enabled"],
                     "reaction_chance": global_config["reaction_chance"],
                     "reactions": DEFAULT_REACTIONS,
@@ -192,7 +201,9 @@ class GroupRepository:
         )
         return "added"
 
-    async def add_keyword_response(self, chat_id: int, keywords: list[str], response: Any) -> str:
+    async def add_keyword_response(
+        self, chat_id: int, keywords: list[str], response: Any
+    ) -> str:
         keywords = normalize_keywords(keywords)
         if not keywords:
             return "missing_keyword"
@@ -213,6 +224,7 @@ class GroupRepository:
                     "global_replies_enabled": True,
                     "global_reactions_enabled": True,
                     "excluded_global_responses": [],
+                    "excluded_global_reactions": [],
                     "reactions": DEFAULT_REACTIONS,
                     "config_overrides": [],
                 },
@@ -245,7 +257,9 @@ class GroupRepository:
         )
         return count
 
-    async def remove_keyword_response(self, chat_id: int, one_based_index: int) -> Any | None:
+    async def remove_keyword_response(
+        self, chat_id: int, one_based_index: int
+    ) -> Any | None:
         document = await self.get(chat_id)
         responses = list(document.get("keyword_responses", []))
         if one_based_index < 1 or one_based_index > len(responses):
@@ -260,7 +274,9 @@ class GroupRepository:
 
     async def clear_all_responses(self, chat_id: int) -> int:
         document = await self.get(chat_id)
-        count = len(document.get("responses", [])) + len(document.get("keyword_responses", []))
+        count = len(document.get("responses", [])) + len(
+            document.get("keyword_responses", [])
+        )
         await self.collection.update_one(
             {"_id": chat_id},
             {"$set": {"responses": [], "keyword_responses": [], "next_index": 0}},
@@ -278,7 +294,9 @@ class GroupRepository:
             global_responses = []
         else:
             excluded = document.get("excluded_global_responses", [])
-            global_responses = [response for response in global_responses if response not in excluded]
+            global_responses = [
+                response for response in global_responses if response not in excluded
+            ]
         responses = document.get("responses", []) + global_responses
         if not responses:
             return None
@@ -290,7 +308,12 @@ class GroupRepository:
             return None
         global_responses = []
         if document.get("global_replies_enabled", True):
-            global_responses = await self.get_global_keyword_responses()
+            excluded = document.get("excluded_global_responses", [])
+            global_responses = [
+                entry
+                for entry in await self.get_global_keyword_responses()
+                if entry not in excluded
+            ]
         matched = [
             entry["response"]
             for entry in [*document.get("keyword_responses", []), *global_responses]
@@ -350,12 +373,32 @@ class GroupRepository:
         )
         return is_excluded
 
+    async def toggle_global_reaction_exclusion(
+        self, chat_id: int, reaction: Any
+    ) -> bool:
+        document = await self.get(chat_id)
+        excluded = list(document.get("excluded_global_reactions", []))
+        if reaction in excluded:
+            excluded.remove(reaction)
+            is_excluded = False
+        else:
+            excluded.append(reaction)
+            is_excluded = True
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"excluded_global_reactions": excluded}},
+            upsert=True,
+        )
+        return is_excluded
+
     async def get_global_responses(self) -> list[Any]:
         document = await self.settings_collection.find_one({"_id": "global_responses"})
         return document.get("responses", []) if document else []
 
     async def get_global_keyword_responses(self) -> list[Any]:
-        document = await self.settings_collection.find_one({"_id": "global_keyword_responses"})
+        document = await self.settings_collection.find_one(
+            {"_id": "global_keyword_responses"}
+        )
         return document.get("responses", []) if document else []
 
     async def add_global_response(self, response: Any) -> str:
@@ -373,7 +416,9 @@ class GroupRepository:
         )
         return "added"
 
-    async def add_global_keyword_response(self, keywords: list[str], response: Any) -> str:
+    async def add_global_keyword_response(
+        self, keywords: list[str], response: Any
+    ) -> str:
         keywords = normalize_keywords(keywords)
         if not keywords:
             return "missing_keyword"
@@ -385,6 +430,10 @@ class GroupRepository:
             {"_id": "global_keyword_responses"},
             {"$push": {"responses": entry}},
             upsert=True,
+        )
+        await self.collection.update_many(
+            {"excluded_global_responses": entry},
+            {"$pull": {"excluded_global_responses": entry}},
         )
         return "added"
 
@@ -442,13 +491,21 @@ class GroupRepository:
             return "full"
         reactions.append(reaction)
         await self.set_global_config("reactions", reactions)
+        await self.collection.update_many(
+            {"excluded_global_reactions": reaction},
+            {"$pull": {"excluded_global_reactions": reaction}},
+        )
         return "added"
 
     async def get_global_keyword_reactions(self) -> list[dict[str, Any]]:
-        document = await self.settings_collection.find_one({"_id": "global_keyword_reactions"})
+        document = await self.settings_collection.find_one(
+            {"_id": "global_keyword_reactions"}
+        )
         return document.get("reactions", []) if document else []
 
-    async def add_global_keyword_reaction(self, keywords: list[str], reaction: str) -> str:
+    async def add_global_keyword_reaction(
+        self, keywords: list[str], reaction: str
+    ) -> str:
         keywords = normalize_keywords(keywords)
         reaction = reaction.strip()
         if not keywords or not reaction:
@@ -463,18 +520,40 @@ class GroupRepository:
             {"$set": {"reactions": reactions}},
             upsert=True,
         )
+        await self.collection.update_many(
+            {"excluded_global_reactions": entry},
+            {"$pull": {"excluded_global_reactions": entry}},
+        )
         return "added"
 
     async def remove_global_reaction(self, one_based_index: int) -> str | None:
-        reactions = list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+        reactions = list(
+            (await self.get_global_config()).get("reactions", DEFAULT_REACTIONS)
+        )
         if one_based_index < 1 or one_based_index > len(reactions):
             return None
         removed = reactions.pop(one_based_index - 1)
         await self.set_global_config("reactions", reactions)
         return removed
 
+    async def remove_global_keyword_reaction(
+        self, one_based_index: int
+    ) -> dict[str, Any] | None:
+        reactions = await self.get_global_keyword_reactions()
+        if one_based_index < 1 or one_based_index > len(reactions):
+            return None
+        removed = reactions.pop(one_based_index - 1)
+        await self.settings_collection.update_one(
+            {"_id": "global_keyword_reactions"},
+            {"$set": {"reactions": reactions}},
+            upsert=True,
+        )
+        return removed
+
     async def clear_global_reactions(self) -> int:
-        reactions = list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+        reactions = list(
+            (await self.get_global_config()).get("reactions", DEFAULT_REACTIONS)
+        )
         await self.set_global_config("reactions", [])
         return len(reactions)
 
@@ -509,7 +588,9 @@ class GroupRepository:
         await self.set_local_config(chat_id, "reactions", reactions)
         return "added"
 
-    async def add_keyword_reaction(self, chat_id: int, keywords: list[str], reaction: str) -> str:
+    async def add_keyword_reaction(
+        self, chat_id: int, keywords: list[str], reaction: str
+    ) -> str:
         keywords = normalize_keywords(keywords)
         reaction = reaction.strip()
         if not keywords or not reaction:
@@ -547,6 +628,34 @@ class GroupRepository:
         )
         return count
 
+    async def remove_keyword_reaction(
+        self, chat_id: int, one_based_index: int
+    ) -> dict[str, Any] | None:
+        document = await self.get(chat_id)
+        reactions = list(document.get("keyword_reactions", []))
+        if one_based_index < 1 or one_based_index > len(reactions):
+            return None
+        removed = reactions.pop(one_based_index - 1)
+        await self.collection.update_one(
+            {"_id": chat_id},
+            {"$set": {"keyword_reactions": reactions}},
+            upsert=True,
+        )
+        return removed
+
+    async def remove_local_reaction(self, chat_id: int, reaction: str) -> bool:
+        document = await self.get(chat_id)
+        local_reactions = (
+            list(document.get("reactions", []))
+            if "reactions" in document.get("config_overrides", [])
+            else []
+        )
+        if reaction not in local_reactions:
+            return False
+        local_reactions.remove(reaction)
+        await self.set_local_config(chat_id, "reactions", local_reactions)
+        return True
+
     async def remove_reaction(self, chat_id: int, reaction: str) -> bool:
         document = await self.get(chat_id)
         local_reactions = (
@@ -559,7 +668,9 @@ class GroupRepository:
             await self.set_local_config(chat_id, "reactions", local_reactions)
             return True
 
-        global_reactions = list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+        global_reactions = list(
+            (await self.get_global_config()).get("reactions", DEFAULT_REACTIONS)
+        )
         if reaction in global_reactions:
             global_reactions.remove(reaction)
             await self.set_global_config("reactions", global_reactions)
@@ -579,8 +690,15 @@ class GroupRepository:
             if "reactions" in document.get("config_overrides", [])
             else []
         )
+        excluded = document.get("excluded_global_reactions", [])
         global_reactions = (
-            list((await self.get_global_config()).get("reactions", DEFAULT_REACTIONS))
+            [
+                reaction
+                for reaction in (await self.get_global_config()).get(
+                    "reactions", DEFAULT_REACTIONS
+                )
+                if reaction not in excluded
+            ]
             if document.get("global_reactions_enabled", True)
             else []
         )
@@ -594,8 +712,13 @@ class GroupRepository:
         document = await self.get(chat_id)
         if not document["enabled"] or document.get("reply_mode") != "keyword":
             return None
+        excluded = document.get("excluded_global_reactions", [])
         global_reactions = (
-            await self.get_global_keyword_reactions()
+            [
+                entry
+                for entry in await self.get_global_keyword_reactions()
+                if entry not in excluded
+            ]
             if document.get("global_reactions_enabled", True)
             else []
         )
@@ -634,7 +757,9 @@ class GroupRepository:
         else:
             await self.settings_collection.delete_one({"_id": "start_image"})
 
-    async def set_capture_group(self, user_id: int, chat_id: int, keywords: list[str] | None = None) -> None:
+    async def set_capture_group(
+        self, user_id: int, chat_id: int, keywords: list[str] | None = None
+    ) -> None:
         update: dict[str, Any] = {"capture_chat_id": chat_id}
         if keywords:
             update["capture_keywords"] = normalize_keywords(keywords)
@@ -655,7 +780,9 @@ class GroupRepository:
             upsert=True,
         )
 
-    async def set_keyword_prompt(self, user_id: int, chat_id: int, reaction: bool = False) -> None:
+    async def set_keyword_prompt(
+        self, user_id: int, chat_id: int, reaction: bool = False
+    ) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},
             {
@@ -664,7 +791,11 @@ class GroupRepository:
                     "capture_keyword_prompt": True,
                     "capture_reaction_prompt": reaction,
                 },
-                "$unset": {"capture_global": "", "pending_broadcast": "", "capture_keywords": ""},
+                "$unset": {
+                    "capture_global": "",
+                    "pending_broadcast": "",
+                    "capture_keywords": "",
+                },
             },
             upsert=True,
         )
@@ -676,7 +807,9 @@ class GroupRepository:
             upsert=True,
         )
 
-    async def set_reaction_capture(self, user_id: int, chat_id: int | None = None, global_: bool = False) -> None:
+    async def set_reaction_capture(
+        self, user_id: int, chat_id: int | None = None, global_: bool = False
+    ) -> None:
         update: dict[str, Any] = {"capture_reaction": True}
         if chat_id is not None:
             update["capture_chat_id"] = chat_id
@@ -696,7 +829,9 @@ class GroupRepository:
             upsert=True,
         )
 
-    async def set_global_keyword_prompt(self, user_id: int, reaction: bool = False) -> None:
+    async def set_global_keyword_prompt(
+        self, user_id: int, reaction: bool = False
+    ) -> None:
         await self.states_collection.update_one(
             {"_id": user_id},
             {
@@ -735,7 +870,11 @@ class GroupRepository:
             {"_id": user_id},
             {
                 "$set": {"pending_broadcast": response},
-                "$unset": {"capture_chat_id": "", "capture_global": "", "capture_broadcast": ""},
+                "$unset": {
+                    "capture_chat_id": "",
+                    "capture_global": "",
+                    "capture_broadcast": "",
+                },
             },
             upsert=True,
         )
@@ -774,4 +913,7 @@ def split_keywords(value: str) -> list[str]:
 
 def keyword_matches(text: str, keywords: list[str]) -> bool:
     haystack = " ".join(text.casefold().split())
-    return bool(haystack and any(keyword in haystack for keyword in normalize_keywords(keywords)))
+    return bool(
+        haystack
+        and any(keyword in haystack for keyword in normalize_keywords(keywords))
+    )

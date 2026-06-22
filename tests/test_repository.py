@@ -27,7 +27,10 @@ class FakeCollection:
         if (
             self.document
             and self.document["_id"] == query["_id"]
-            and ("enabled" not in query or self.document.get("enabled") == query["enabled"])
+            and (
+                "enabled" not in query
+                or self.document.get("enabled") == query["enabled"]
+            )
         ):
             return deepcopy(self.document)
         return None
@@ -47,7 +50,9 @@ class FakeCollection:
                     values.append(value)
         if "$pull" in update:
             for key, value in update["$pull"].items():
-                self.document[key] = [item for item in self.document.get(key, []) if item != value]
+                self.document[key] = [
+                    item for item in self.document.get(key, []) if item != value
+                ]
         if "$unset" in update:
             for key in update["$unset"]:
                 self.document.pop(key, None)
@@ -88,7 +93,11 @@ class FakeSettingsCollection:
         return previous
 
     async def find_one(self, query):
-        return deepcopy(self.config if query["_id"] == "global_config" else self.documents.get(query["_id"]))
+        return deepcopy(
+            self.config
+            if query["_id"] == "global_config"
+            else self.documents.get(query["_id"])
+        )
 
     async def update_one(self, query, update, upsert=False):
         target = (
@@ -104,10 +113,14 @@ class FakeSettingsCollection:
         return type("Result", (), {"modified_count": 1})()
 
 
-def repository_with(document, global_responses=None, global_config=None) -> GroupRepository:
+def repository_with(
+    document, global_responses=None, global_config=None
+) -> GroupRepository:
     repository = GroupRepository.__new__(GroupRepository)
     repository.collection = FakeCollection(document)
-    repository.settings_collection = FakeSettingsCollection(global_responses, global_config)
+    repository.settings_collection = FakeSettingsCollection(
+        global_responses, global_config
+    )
     return repository
 
 
@@ -229,7 +242,9 @@ async def test_next_response_uses_global_replies_when_group_has_none() -> None:
         global_responses=["global one", "global two"],
     )
 
-    with patch("autoreply.repository.random.choice", return_value="global two") as choice:
+    with patch(
+        "autoreply.repository.random.choice", return_value="global two"
+    ) as choice:
         assert await repository.next_response(123) == "global two"
     choice.assert_called_once_with(["global one", "global two"])
 
@@ -304,11 +319,39 @@ async def test_keyword_mode_uses_separate_global_keyword_replies() -> None:
         global_responses=["random global"],
     )
 
-    assert await repository.add_global_keyword_response(["hello"], "keyword global") == "added"
-    with patch("autoreply.repository.random.choice", return_value="keyword global") as choice:
+    assert (
+        await repository.add_global_keyword_response(["hello"], "keyword global")
+        == "added"
+    )
+    with patch(
+        "autoreply.repository.random.choice", return_value="keyword global"
+    ) as choice:
         assert await repository.keyword_response(123, "hello group") == "keyword global"
     choice.assert_called_once_with(["keyword global"])
     assert await repository.get_global_responses() == ["random global"]
+
+
+@pytest.mark.asyncio
+async def test_keyword_global_reply_can_be_excluded_locally() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
+            "keyword_responses": [],
+            "excluded_global_responses": [],
+        }
+    )
+
+    entry = {"keywords": ["hello"], "response": "keyword global"}
+    repository.settings_collection.documents["global_keyword_responses"][
+        "responses"
+    ] = [entry]
+
+    assert await repository.keyword_response(123, "hello there") == "keyword global"
+    assert await repository.toggle_global_exclusion(123, entry) is True
+    assert await repository.keyword_response(123, "hello there") is None
 
 
 @pytest.mark.asyncio
@@ -366,6 +409,22 @@ async def test_global_reactions_are_inherited_until_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reaction_can_be_excluded_locally() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "excluded_global_reactions": [],
+        },
+        global_config={"reactions": ["global"]},
+    )
+
+    assert await repository.reaction_settings(123) == (25, ["global"])
+    assert await repository.toggle_global_reaction_exclusion(123, "global") is True
+    assert await repository.reaction_settings(123) == (25, [])
+
+
+@pytest.mark.asyncio
 async def test_keyword_global_reactions_are_inherited_until_disabled() -> None:
     repository = repository_with(
         {
@@ -399,6 +458,40 @@ async def test_add_reaction_does_not_copy_inherited_global_reactions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remove_local_reaction_only_updates_local_override() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reactions": ["local"],
+            "config_overrides": ["reactions"],
+        },
+        global_config={"reactions": ["global"]},
+    )
+
+    assert await repository.remove_local_reaction(123, "local") is True
+    assert await repository.reaction_settings(123) == (25, ["global"])
+
+
+@pytest.mark.asyncio
+async def test_remove_keyword_reaction_deletes_local_entry() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
+            "keyword_reactions": [{"keywords": ["win"], "reaction": "🎉"}],
+        }
+    )
+
+    removed = await repository.remove_keyword_reaction(123, 1)
+
+    assert removed == {"keywords": ["win"], "reaction": "🎉"}
+    assert (await repository.get(123))["keyword_reactions"] == []
+
+
+@pytest.mark.asyncio
 async def test_reply_chance_defaults_to_50_for_enabled_existing_group() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0}
@@ -417,7 +510,9 @@ async def test_reply_chance_returns_none_for_disabled_group() -> None:
 
 
 @pytest.mark.asyncio
-async def test_remove_reaction_persists_default_reaction_list_without_invalid_value() -> None:
+async def test_remove_reaction_persists_default_reaction_list_without_invalid_value() -> (
+    None
+):
     repository = repository_with(None)
 
     assert await repository.remove_reaction(123, "👀")

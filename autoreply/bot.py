@@ -482,16 +482,17 @@ async def reply_list_content(
                     ),
                 )
             ]
-            if source == "global":
-                row.append(
-                    InlineKeyboardButton(
-                        f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
-                        callback_data=f"mgr:exclude-{index}-{page}:{chat_id}",
-                        style=ButtonStyle.SUCCESS
-                        if is_excluded
-                        else ButtonStyle.DANGER,
-                    )
+            row.append(
+                InlineKeyboardButton(
+                    f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
+                    callback_data=(
+                        f"mgr:exclude-keyword-{index}-{page}:{chat_id}"
+                        if source == "global-keyword"
+                        else f"mgr:exclude-{index}-{page}:{chat_id}"
+                    ),
+                    style=ButtonStyle.SUCCESS if is_excluded else ButtonStyle.DANGER,
                 )
+            )
             buttons.append(row)
     text = (
         f"📚 Replies • {page + 1}/{page_count}\n\n" + "\n".join(lines)
@@ -601,22 +602,45 @@ async def reaction_list_content(
     document = await repository.get(chat_id)
     keyword_mode = document.get("reply_mode") == "keyword"
     global_reactions_enabled = document.get("global_reactions_enabled", True)
+    excluded = document.get("excluded_global_reactions", [])
+    lines = []
+    buttons = []
     if keyword_mode:
-        local_entries = document.get("keyword_reactions", [])
+        local_entries = list(document.get("keyword_reactions", []))
         global_entries = (
-            await repository.get_global_keyword_reactions()
+            list(await repository.get_global_keyword_reactions())
             if global_reactions_enabled
             else []
         )
-        lines = [
-            f"{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
-            for index, entry in enumerate(local_entries, 1)
-        ]
-        offset = len(lines)
-        lines.extend(
-            f"{index}. 🌐 {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
-            for index, entry in enumerate(global_entries, offset + 1)
-        )
+        for index, entry in enumerate(local_entries, 1):
+            lines.append(
+                f"K{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
+            )
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"🗑 K{index}",
+                        callback_data=f"mgr:delete-keyword-reaction-{index}:{chat_id}",
+                        style=ButtonStyle.DANGER,
+                    )
+                ]
+            )
+        for index, entry in enumerate(global_entries, 1):
+            is_excluded = entry in excluded
+            lines.append(
+                f"G{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}{' (excluded)' if is_excluded else ''}"
+            )
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
+                        callback_data=f"mgr:exclude-keyword-reaction-{index}:{chat_id}",
+                        style=ButtonStyle.SUCCESS
+                        if is_excluded
+                        else ButtonStyle.DANGER,
+                    )
+                ]
+            )
     else:
         local_entries = (
             list(document.get("reactions", []))
@@ -628,29 +652,42 @@ async def reaction_list_content(
             if global_reactions_enabled
             else []
         )
-        lines = [
-            f"{index}. {reaction}" for index, reaction in enumerate(local_entries, 1)
-        ]
-        offset = len(lines)
-        lines.extend(
-            f"{index}. 🌐 {reaction}"
-            for index, reaction in enumerate(global_entries, offset + 1)
-        )
-    text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
-    return (
-        text[:4096],
-        InlineKeyboardMarkup(
-            [
+        for index, reaction in enumerate(local_entries, 1):
+            lines.append(f"L{index}. {reaction}")
+            buttons.append(
                 [
                     InlineKeyboardButton(
-                        "⬅️ Manager",
-                        callback_data=f"mgr:open:{chat_id}",
+                        f"🗑 L{index}",
+                        callback_data=f"mgr:delete-reaction-{index}:{chat_id}",
                         style=ButtonStyle.DANGER,
                     )
                 ]
-            ]
-        ),
+            )
+        for index, reaction in enumerate(global_entries, 1):
+            is_excluded = reaction in excluded
+            lines.append(f"G{index}. {reaction}{' (excluded)' if is_excluded else ''}")
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{'✅ Include' if is_excluded else '🚫 Exclude'} G{index}",
+                        callback_data=f"mgr:exclude-reaction-{index}:{chat_id}",
+                        style=ButtonStyle.SUCCESS
+                        if is_excluded
+                        else ButtonStyle.DANGER,
+                    )
+                ]
+            )
+    text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ Manager",
+                callback_data=f"mgr:open:{chat_id}",
+                style=ButtonStyle.DANGER,
+            )
+        ]
     )
+    return text[:4096], InlineKeyboardMarkup(buttons)
 
 
 async def global_reaction_list_content(
@@ -670,20 +707,26 @@ async def global_reaction_list_content(
     else:
         lines = [f"{index}. {reaction}" for index, reaction in enumerate(reactions, 1)]
     text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
-    return (
-        text[:4096],
-        InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Manager",
-                        callback_data="global:open",
-                        style=ButtonStyle.DANGER,
-                    )
-                ]
-            ]
-        ),
+    buttons = [
+        [
+            InlineKeyboardButton(
+                f"🗑 {index}",
+                callback_data=f"global:delete-reaction-{index}",
+                style=ButtonStyle.DANGER,
+            )
+        ]
+        for index, _ in enumerate(reactions, 1)
+    ]
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ Manager",
+                callback_data="global:open",
+                style=ButtonStyle.DANGER,
+            )
+        ]
     )
+    return text[:4096], InlineKeyboardMarkup(buttons)
 
 
 async def send_response(client: Client, incoming: Message, response: object) -> None:
@@ -1708,9 +1751,11 @@ def register_handlers(
                         "keyword_responses", []
                     )[index - 1]
                     response = keyword_response(entry)
+                    toggle_target = response
                 elif source == "gk":
                     entry = (await repository.get_global_keyword_responses())[index - 1]
                     response = keyword_response(entry)
+                    toggle_target = entry
                 else:
                     responses = (
                         (await repository.get(chat_id))["responses"]
@@ -1718,6 +1763,7 @@ def register_handlers(
                         else await repository.get_global_responses()
                     )
                     response = responses[index - 1]
+                    toggle_target = response
             except (ValueError, IndexError):
                 await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
@@ -1728,23 +1774,93 @@ def register_handlers(
                 f"{source.upper()}{index}",
                 preview_keyboard(
                     f"mgr:list-{page}:{chat_id}",
-                    "🗑 Delete"
-                    if source in {"l", "k"}
-                    else "🌐 Global Reply"
-                    if source == "gk"
-                    else "🚫 Exclude",
+                    (
+                        "🗑 Delete"
+                        if source in {"l", "k"}
+                        else (
+                            "✅ Include"
+                            if toggle_target
+                            in (await repository.get(chat_id)).get(
+                                "excluded_global_responses", []
+                            )
+                            else "🚫 Exclude"
+                        )
+                    ),
                     (
                         f"mgr:delete-keyword-{index}-{page}:{chat_id}"
                         if source == "k"
                         else f"mgr:delete-{index}-{page}:{chat_id}"
                         if source == "l"
-                        else f"mgr:list-{page}:{chat_id}"
+                        else f"mgr:exclude-keyword-{index}-{page}:{chat_id}"
                         if source == "gk"
                         else f"mgr:exclude-{index}-{page}:{chat_id}"
                     ),
                 ),
             )
             await query.answer()
+            return
+        elif action.startswith("exclude-keyword-reaction-"):
+            try:
+                index = int(action.removeprefix("exclude-keyword-reaction-"))
+                reaction = (await repository.get_global_keyword_reactions())[index - 1]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Reaction not found.", show_alert=True)
+                return
+            await repository.toggle_global_reaction_exclusion(chat_id, reaction)
+            text, keyboard = await reaction_list_content(repository, chat_id)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("✅ Updated")
+            return
+        elif action.startswith("exclude-reaction-"):
+            try:
+                index = int(action.removeprefix("exclude-reaction-"))
+                reaction = (await repository.get_global_config()).get("reactions", [])[
+                    index - 1
+                ]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Reaction not found.", show_alert=True)
+                return
+            await repository.toggle_global_reaction_exclusion(chat_id, reaction)
+            text, keyboard = await reaction_list_content(repository, chat_id)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("✅ Updated")
+            return
+        elif action.startswith("delete-keyword-reaction-"):
+            try:
+                index = int(action.removeprefix("delete-keyword-reaction-"))
+            except ValueError:
+                await query.answer("⚠️ Invalid reaction.", show_alert=True)
+                return
+            await repository.remove_keyword_reaction(chat_id, index)
+            text, keyboard = await reaction_list_content(repository, chat_id)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
+            return
+        elif action.startswith("delete-reaction-"):
+            try:
+                index = int(action.removeprefix("delete-reaction-"))
+                reaction = (await repository.get(chat_id)).get("reactions", [])[
+                    index - 1
+                ]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Invalid reaction.", show_alert=True)
+                return
+            await repository.remove_local_reaction(chat_id, reaction)
+            text, keyboard = await reaction_list_content(repository, chat_id)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
+            return
+        elif action.startswith("exclude-keyword-"):
+            try:
+                index, page = callback_index_page(action, "exclude-keyword-")
+                response = (await repository.get_global_keyword_responses())[index - 1]
+            except (ValueError, IndexError):
+                await query.answer("⚠️ Reply not found.", show_alert=True)
+                return
+            await repository.toggle_global_exclusion(chat_id, response)
+            text, keyboard = await reply_list_content(client, repository, chat_id, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("✅ Updated")
             return
         elif action.startswith("exclude-"):
             try:
@@ -1958,6 +2074,20 @@ def register_handlers(
                 ),
             )
             await query.answer()
+            return
+        elif action.startswith("delete-reaction-"):
+            try:
+                index = int(action.removeprefix("delete-reaction-"))
+            except ValueError:
+                await query.answer("⚠️ Invalid reaction.", show_alert=True)
+                return
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.remove_global_keyword_reaction(index)
+            else:
+                await repository.remove_global_reaction(index)
+            text, keyboard = await global_reaction_list_content(repository)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
             return
         elif action.startswith("delete-"):
             try:
