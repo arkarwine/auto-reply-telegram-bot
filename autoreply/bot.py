@@ -639,12 +639,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                "🎯 Mode: Keyword" if keyword_mode else "🎲 Mode: Random",
-                callback_data=f"mgr:mode:{chat_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
                 setting("enabled", enabled_label),
                 callback_data=f"mgr:toggle:{chat_id}",
                 style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
@@ -687,6 +681,12 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                         style=ButtonStyle.SUCCESS,
                     )
                 ],
+                [
+                    InlineKeyboardButton(
+                        "🎯 Mode: Keyword",
+                        callback_data=f"mgr:mode:{chat_id}",
+                    )
+                ],
             ]
         )
         return InlineKeyboardMarkup(rows)
@@ -713,12 +713,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    "🌐 Global Replies: On" if document.get("global_replies_enabled", True) else "🌐 Global Replies: Off",
-                    callback_data=f"mgr:globals:{chat_id}",
-                )
-            ],
-            [
                 InlineKeyboardButton("🗑 Clear Replies", callback_data=f"mgr:confirm-clear:{chat_id}", style=ButtonStyle.DANGER),
                 InlineKeyboardButton("🎭 Clear Reactions", callback_data=f"mgr:confirm-clear-reactions:{chat_id}", style=ButtonStyle.DANGER),
             ],
@@ -727,6 +721,18 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                     "🔄 Refresh",
                     callback_data=f"mgr:open:{chat_id}",
                     style=ButtonStyle.SUCCESS,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🌐 Global Replies: On" if document.get("global_replies_enabled", True) else "🌐 Global Replies: Off",
+                    callback_data=f"mgr:globals:{chat_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎲 Mode: Random",
+                    callback_data=f"mgr:mode:{chat_id}",
                 )
             ],
         ]
@@ -771,7 +777,7 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "➕ Add Global", callback_data="global:add", style=ButtonStyle.SUCCESS
+                    "➕ Add Replies", callback_data="global:add", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
                     "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
@@ -779,13 +785,9 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
-                    callback_data="global:toggle",
-                ),
-                InlineKeyboardButton(
-                    "🌐 Global Reactions: On"
+                    "🎭 Reactions: On"
                     if config.get("reactions_enabled", True)
-                    else "🌐 Global Reactions: Off",
+                    else "🎭 Reactions: Off",
                     callback_data="global:reactions",
                 ),
             ],
@@ -811,10 +813,15 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "🗑 Clear Globals",
+                    "🗑 Clear Replies",
                     callback_data="global:confirm-clear",
                     style=ButtonStyle.DANGER,
-                )
+                ),
+                InlineKeyboardButton(
+                    "🎭 Clear Reactions",
+                    callback_data="global:confirm-clear-reactions",
+                    style=ButtonStyle.DANGER,
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -822,6 +829,12 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
                     callback_data="global:open",
                     style=ButtonStyle.SUCCESS,
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
+                    callback_data="global:toggle",
+                ),
             ],
         ]
     )
@@ -1481,9 +1494,12 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 )
         elif action == "clear":
             await repository.clear_global_responses()
+        elif action == "clear-reactions":
+            await repository.set_global_config("reactions_enabled", False)
+            await repository.set_global_config("reaction_chance", 0)
         elif action == "confirm-clear":
             await query.message.reply_text(
-                "🗑 Clear every global reply?",
+                "🗑 Clear global replies?",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -1495,6 +1511,24 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                             InlineKeyboardButton(
                                 "✖️ Cancel", callback_data="global:open", style=ButtonStyle.PRIMARY
                             ),
+                        ]
+                    ]
+                ),
+            )
+            await query.answer()
+            return
+        elif action == "confirm-clear-reactions":
+            await query.message.reply_text(
+                "🎭 Clear global reactions?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🎭 Clear",
+                                callback_data="global:clear-reactions",
+                                style=ButtonStyle.DANGER,
+                            ),
+                            InlineKeyboardButton("✖️ Cancel", callback_data="global:open"),
                         ]
                     ]
                 ),

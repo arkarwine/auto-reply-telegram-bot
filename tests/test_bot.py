@@ -535,6 +535,7 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "🌐 Global: Rate: ∞/min" in labels
     assert "🌐 Global Replies: On" in labels
     assert "🌐 Global Reactions: On" in labels
+    assert labels[-2:] == ["🌐 Global Replies: On", "🎲 Mode: Random"]
     assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
@@ -578,19 +579,21 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == [
-        "➕ Add Global",
+        "➕ Add Replies",
         "🌐 Replies",
-        "⏸ New Groups: Off",
-        "🌐 Global Reactions: On",
+        "🎭 Reactions: On",
         "💬 Reply: 50%",
         "🎲 React: 25%",
         "⏱ 10s",
         "🚦 ∞/min",
-        "🗑 Clear Globals",
+        "🗑 Clear Replies",
+        "🎭 Clear Reactions",
         "🔄 Refresh",
+        "⏸ New Groups: Off",
     ]
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
-    assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
+    assert styles["🎭 Reactions: On"] == ButtonStyle.DEFAULT
+    assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
 
 
