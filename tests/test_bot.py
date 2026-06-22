@@ -11,7 +11,6 @@ from autoreply.bot import (
     START_TEXT,
     SUDOER_BOT_COMMANDS,
     SUDOER_HELP_TEXT,
-    SUDOER_PANEL_TEXT,
     broadcast_progress_text,
     broadcast_response,
     broadcast_source,
@@ -629,20 +628,21 @@ def test_link_keyboard_keeps_help_when_no_links_are_configured() -> None:
     assert [row[0].text for row in keyboard.inline_keyboard] == ["❓ Help"]
 
 
-def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
+def test_link_keyboard_shows_global_replies_only_for_sudoers() -> None:
     regular = link_keyboard({}, "example_bot")
     sudoer = link_keyboard({}, "example_bot", show_sudoer=True)
 
     regular_labels = [button.text for row in regular.inline_keyboard for button in row]
-    sudoer_labels = [button.text for row in sudoer.inline_keyboard for button in row]
+    sudoer_buttons = [button for row in sudoer.inline_keyboard for button in row]
+    sudoer_labels = [button.text for button in sudoer_buttons]
 
-    assert "🛡 Sudo Panel" not in regular_labels
-    assert "🛡 Sudo Panel" in sudoer_labels
-    assert "Choose the area" in SUDOER_PANEL_TEXT
-    sudoer_styles = {
-        button.text: button.style for row in sudoer.inline_keyboard for button in row
-    }
-    assert sudoer_styles["🛡 Sudo Panel"] == ButtonStyle.DANGER
+    assert "🌐 Global Replies" not in regular_labels
+    assert "🌐 Global Replies" in sudoer_labels
+    global_button = next(
+        button for button in sudoer_buttons if button.text == "🌐 Global Replies"
+    )
+    assert global_button.callback_data == "start:globals"
+    assert global_button.style == ButtonStyle.DANGER
 
 
 def test_sudoer_panel_has_privileged_shortcuts() -> None:

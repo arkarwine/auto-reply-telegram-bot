@@ -225,8 +225,8 @@ def link_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    "🛡 Sudo Panel",
-                    callback_data="start:sudo",
+                    "🌐 Global Replies",
+                    callback_data="start:globals",
                     style=ButtonStyle.DANGER,
                 )
             ]
