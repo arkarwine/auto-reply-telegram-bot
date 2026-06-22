@@ -60,29 +60,45 @@ class FakeCollection:
 
 class FakeSettingsCollection:
     def __init__(self, responses=None, config=None):
-        self.document = {
-            "_id": "global_responses",
-            "responses": responses or [],
-            "next_index": 0,
+        self.documents = {
+            "global_responses": {
+                "_id": "global_responses",
+                "responses": responses or [],
+                "next_index": 0,
+            },
+            "global_keyword_responses": {
+                "_id": "global_keyword_responses",
+                "responses": [],
+            },
+            "global_keyword_reactions": {
+                "_id": "global_keyword_reactions",
+                "reactions": [],
+            },
         }
         self.config = {"_id": "global_config", **(config or {})}
 
     async def find_one_and_update(self, query, update, return_document):
-        if not self.document["responses"]:
+        document = self.documents["global_responses"]
+        if not document["responses"]:
             return None
-        previous = deepcopy(self.document)
-        self.document["next_index"] = (self.document["next_index"] + 1) % len(
-            self.document["responses"]
+        previous = deepcopy(document)
+        document["next_index"] = (document["next_index"] + 1) % len(
+            document["responses"]
         )
         return previous
 
     async def find_one(self, query):
-        return deepcopy(self.config if query["_id"] == "global_config" else self.document)
+        return deepcopy(self.config if query["_id"] == "global_config" else self.documents.get(query["_id"]))
 
     async def update_one(self, query, update, upsert=False):
-        target = self.config if query["_id"] == "global_config" else self.document
+        target = (
+            self.config
+            if query["_id"] == "global_config"
+            else self.documents.setdefault(query["_id"], {"_id": query["_id"]})
+        )
         if "$push" in update:
-            target["responses"].append(update["$push"]["responses"])
+            for key, value in update["$push"].items():
+                target.setdefault(key, []).append(value)
         if "$set" in update:
             target.update(update["$set"])
         return type("Result", (), {"modified_count": 1})()
@@ -275,6 +291,27 @@ async def test_keyword_mode_only_returns_matching_keyword_reply() -> None:
 
 
 @pytest.mark.asyncio
+async def test_keyword_mode_uses_separate_global_keyword_replies() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
+            "responses": ["random local"],
+            "keyword_responses": [],
+        },
+        global_responses=["random global"],
+    )
+
+    assert await repository.add_global_keyword_response(["hello"], "keyword global") == "added"
+    with patch("autoreply.repository.random.choice", return_value="keyword global") as choice:
+        assert await repository.keyword_response(123, "hello group") == "keyword global"
+    choice.assert_called_once_with(["keyword global"])
+    assert await repository.get_global_responses() == ["random global"]
+
+
+@pytest.mark.asyncio
 async def test_keyword_reaction_uses_separate_keyword_store() -> None:
     repository = repository_with(
         {
@@ -289,6 +326,24 @@ async def test_keyword_reaction_uses_separate_keyword_store() -> None:
 
     assert await repository.keyword_reaction(123, "big win") == "🎉"
     assert await repository.reaction_settings(123) is None
+
+
+@pytest.mark.asyncio
+async def test_keyword_mode_uses_separate_global_keyword_reactions() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "config_overrides": ["reply_mode"],
+            "keyword_reactions": [],
+        },
+        global_config={"reactions": ["👍"]},
+    )
+
+    assert await repository.add_global_keyword_reaction(["win"], "🎉") == "added"
+    assert await repository.keyword_reaction(123, "big win") == "🎉"
+    assert (await repository.get_global_config())["reactions"] == ["👍"]
 
 
 @pytest.mark.asyncio

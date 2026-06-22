@@ -463,20 +463,28 @@ async def global_reply_list_content(
     repository: GroupRepository,
     page: int,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    responses = await repository.get_global_responses()
+    keyword_mode = (await repository.get_global_config()).get("reply_mode") == "keyword"
+    responses = (
+        await repository.get_global_keyword_responses()
+        if keyword_mode
+        else await repository.get_global_responses()
+    )
     page_count = max(1, (len(responses) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
     page = max(0, min(page, page_count - 1))
     page_items = list(enumerate(responses, 1))[
         page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE
     ]
-    labels = [
-        (index, truncate_label(await display_response_label(client, response)))
-        for index, response in page_items
-    ]
+    labels = []
+    for index, response in page_items:
+        stored_response = keyword_response(response) if keyword_mode else response
+        label = truncate_label(await display_response_label(client, stored_response))
+        if keyword_mode:
+            label = f"{keyword_entry_label(response)} -> {label}"
+        labels.append((index, label))
     text = (
         "📭 No global replies yet."
         if not responses
-        else f"🌐 Global Replies • {page + 1}/{page_count}\n\n"
+        else f"🌐 Global {'Keyword ' if keyword_mode else ''}Replies • {page + 1}/{page_count}\n\n"
         + "\n".join(f"{index}. {label}" for index, label in labels)
     )
     buttons = [
@@ -534,8 +542,19 @@ async def reaction_list_content(
 
 
 async def global_reaction_list_content(repository: GroupRepository) -> tuple[str, InlineKeyboardMarkup]:
-    reactions = (await repository.get_global_config()).get("reactions", [])
-    lines = [f"{index}. {reaction}" for index, reaction in enumerate(reactions, 1)]
+    keyword_mode = (await repository.get_global_config()).get("reply_mode") == "keyword"
+    reactions = (
+        await repository.get_global_keyword_reactions()
+        if keyword_mode
+        else (await repository.get_global_config()).get("reactions", [])
+    )
+    if keyword_mode:
+        lines = [
+            f"{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
+            for index, entry in enumerate(reactions, 1)
+        ]
+    else:
+        lines = [f"{index}. {reaction}" for index, reaction in enumerate(reactions, 1)]
     text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
     return (
         text[:4096],
@@ -918,12 +937,22 @@ def global_saved_keyboard() -> InlineKeyboardMarkup:
 
 
 async def global_manager_content(repository: GroupRepository) -> tuple[str, InlineKeyboardMarkup]:
-    responses = await repository.get_global_responses()
     config = await repository.get_global_config()
+    keyword_mode = config.get("reply_mode") == "keyword"
+    responses = (
+        await repository.get_global_keyword_responses()
+        if keyword_mode
+        else await repository.get_global_responses()
+    )
+    reactions = (
+        await repository.get_global_keyword_reactions()
+        if keyword_mode
+        else config.get("reactions", [])
+    )
     rate = config.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE) or "∞"
     return (
         "🌐 Global Defaults\n\n"
-        f"📚 Saved: {len(responses)}\n"
+        f"📚 Replies: {len(responses)}  •  🎭 Reactions: {len(reactions)}\n"
         f"{'🟢 New groups active' if config['enabled'] else '🔴 New groups paused'}\n"
         f"💬 {config.get('reply_chance', DEFAULT_REPLY_CHANCE)}%  •  "
         f"🎲 {config.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%  •  "
@@ -1521,16 +1550,29 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
         action = query.data.split(":", 1)[1]
         if action == "add":
-            await repository.set_global_capture(query.from_user.id)
-            await query.message.reply_text(
-                "🌐 Send the global reply to save.\n\n/cancel to stop."
-            )
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.set_global_keyword_prompt(query.from_user.id)
+                await query.message.reply_text(
+                    "🎯 Send the keyword or comma-separated keywords for this global reply.\n\n/cancel to stop."
+                )
+            else:
+                await repository.set_global_capture(query.from_user.id)
+                await query.message.reply_text(
+                    "🌐 Send the global reply to save.\n\n/cancel to stop."
+                )
             await query.answer("📥 Waiting for reply…")
             return
         if action == "add-reaction":
-            await repository.set_reaction_capture(query.from_user.id, global_=True)
-            await query.message.reply_text("🎭 Send the global reaction emoji to save.\n\n/cancel to stop.")
-            await query.answer("📥 Waiting for reaction…")
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.set_global_keyword_prompt(query.from_user.id, reaction=True)
+                await query.message.reply_text(
+                    "🎯 Send the keyword or comma-separated keywords for this global reaction.\n\n/cancel to stop."
+                )
+                await query.answer("📥 Waiting for keyword…")
+            else:
+                await repository.set_reaction_capture(query.from_user.id, global_=True)
+                await query.message.reply_text("🎭 Send the global reaction emoji to save.\n\n/cancel to stop.")
+                await query.answer("📥 Waiting for reaction…")
             return
         if action == "reaction-list":
             text, keyboard = await global_reaction_list_content(repository)
@@ -1578,9 +1620,15 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                     ),
                 )
         elif action == "clear":
-            await repository.clear_global_responses()
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.clear_global_keyword_responses()
+            else:
+                await repository.clear_global_responses()
         elif action == "clear-reactions":
-            await repository.clear_global_reactions()
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.clear_global_keyword_reactions()
+            else:
+                await repository.clear_global_reactions()
         elif action == "confirm-clear":
             await query.message.reply_text(
                 "🗑 Clear global replies?",
@@ -1622,7 +1670,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         elif action.startswith("preview-"):
             try:
                 index, page = callback_index_page(action, "preview-")
-                response = (await repository.get_global_responses())[index - 1]
+                if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                    entry = (await repository.get_global_keyword_responses())[index - 1]
+                    response = keyword_response(entry)
+                else:
+                    response = (await repository.get_global_responses())[index - 1]
             except (ValueError, IndexError):
                 await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
@@ -1641,7 +1693,10 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             except ValueError:
                 await query.answer("⚠️ Invalid reply.", show_alert=True)
                 return
-            await repository.remove_global_response(index)
+            if (await repository.get_global_config()).get("reply_mode") == "keyword":
+                await repository.remove_global_keyword_response(index)
+            else:
+                await repository.remove_global_response(index)
             text, keyboard = await global_reply_list_content(client, repository, page)
             await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer("🗑 Deleted")
@@ -1691,6 +1746,19 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         if not message.from_user:
             return
         state = await repository.get_capture_state(message.from_user.id)
+        if state.get("capture_global_keyword_prompt"):
+            keywords = split_keywords(message.text or message.caption or "")
+            if not keywords:
+                await message.reply_text("⚠️ Send at least one keyword, separated with commas if needed.")
+                return
+            await repository.set_capture_group(message.from_user.id, 0, keywords)
+            if state.get("capture_global_reaction_prompt"):
+                await repository.set_reaction_capture(message.from_user.id, global_=True)
+                await message.reply_text("🎭 Now send the global reaction emoji for those keywords.\n\n/cancel to stop.")
+            else:
+                await repository.set_global_capture(message.from_user.id)
+                await message.reply_text("➕ Now send the global reply message for those keywords.\n\n/cancel to stop.")
+            return
         if state.get("capture_keyword_prompt"):
             chat_id = state.get("capture_chat_id")
             keywords = split_keywords(message.text or message.caption or "")
@@ -1726,7 +1794,14 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 await message.reply_text("⚠️ Send the reaction as text.")
                 return
             if state.get("capture_global_reaction"):
-                result = await repository.add_global_reaction(reaction)
+                result = (
+                    await repository.add_global_keyword_reaction(
+                        state.get("capture_keywords", []),
+                        reaction,
+                    )
+                    if state.get("capture_keywords")
+                    else await repository.add_global_reaction(reaction)
+                )
             elif state.get("capture_keywords"):
                 result = await repository.add_keyword_reaction(
                     chat_id,
@@ -1765,10 +1840,16 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             "label": message_label(message),
             "has_preview": bool(message.text or message.caption),
         }
-        result = await repository.add_global_response(response) if global_capture else (
+        result = (
+            await repository.add_global_keyword_response(state.get("capture_keywords", []), response)
+            if global_capture and state.get("capture_keywords")
+            else await repository.add_global_response(response)
+            if global_capture
+            else (
             await repository.add_keyword_response(chat_id, state.get("capture_keywords", []), response)
             if state.get("capture_keywords")
             else await repository.add_response(chat_id, response)
+            )
         )
         await repository.clear_capture_group(message.from_user.id)
         replies = {

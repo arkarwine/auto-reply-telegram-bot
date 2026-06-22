@@ -369,6 +369,9 @@ async def test_reply_list_shows_ten_truncated_items_with_preview_actions() -> No
 @pytest.mark.asyncio
 async def test_global_reply_list_has_preview_next_to_delete() -> None:
     class FakeRepository:
+        async def get_global_config(self):
+            return {"reply_mode": "random"}
+
         async def get_global_responses(self):
             return ["one", "two"]
 
