@@ -8,13 +8,13 @@ from pyrogram.errors import FloodWait
 from autoreply.bot import (
     HELP_TEXT,
     PUBLIC_BOT_COMMANDS,
+    START_TEXT,
     SUDOER_BOT_COMMANDS,
     SUDOER_HELP_TEXT,
     SUDOER_PANEL_TEXT,
-    START_TEXT,
-    broadcast_source,
-    broadcast_response,
     broadcast_progress_text,
+    broadcast_response,
+    broadcast_source,
     chance_succeeds,
     choose_reaction,
     command_argument,
@@ -27,20 +27,21 @@ from autoreply.bot import (
     link_keyboard,
     manager_keyboard,
     message_label,
+    next_local_option,
+    next_option,
+    register_bot_commands,
+    reply_list_content,
     response_label,
     response_preview_text,
-    reply_list_content,
-    register_bot_commands,
     retry_flood_wait,
     saved_reply_keyboard,
     send_broadcast_errors,
     send_response,
-    sudoer_panel_keyboard,
     start_image_file_id,
+    sudoer_panel_keyboard,
     truncate_label,
-    next_option,
-    next_local_option,
     valid_link,
+    validate_reaction,
 )
 from autoreply.config import Settings
 
@@ -61,7 +62,9 @@ def test_command_argument_supports_autoreply_action() -> None:
 
 
 def test_broadcast_source_is_reply_based_with_flags() -> None:
-    text_message = SimpleNamespace(text="/broadcast Hello groups", reply_to_message=None)
+    text_message = SimpleNamespace(
+        text="/broadcast Hello groups", reply_to_message=None
+    )
     replied_message = SimpleNamespace(
         text="/broadcast -user -copy",
         reply_to_message=SimpleNamespace(chat=SimpleNamespace(id=123), id=42),
@@ -162,6 +165,33 @@ async def test_flood_wait_is_retried() -> None:
     assert attempts == 2
 
 
+@pytest.mark.asyncio
+async def test_validate_reaction_accepts_reactable_emoji() -> None:
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def react(self, reaction=None):
+            self.calls.append(reaction)
+
+    message = FakeMessage()
+
+    assert await validate_reaction(message, "👍") is True
+    assert message.calls == ["👍", None]
+
+
+@pytest.mark.asyncio
+async def test_validate_reaction_rejects_invalid_values() -> None:
+    from pyrogram.errors import ReactionInvalid
+
+    class FakeMessage:
+        async def react(self, reaction=None):
+            if reaction is not None:
+                raise ReactionInvalid("invalid")
+
+    assert await validate_reaction(FakeMessage(), "not a reaction") is False
+
+
 def test_public_bot_menu_hides_sudoer_commands() -> None:
     assert {command.command for command in PUBLIC_BOT_COMMANDS} == {
         "start",
@@ -206,7 +236,12 @@ async def test_bot_commands_are_registered_for_each_sudoer() -> None:
 
     await register_bot_commands(app, settings)
 
-    assert [getattr(scope, "chat_id", None) for _, scope in app.calls] == [None, 1, 2, 3]
+    assert [getattr(scope, "chat_id", None) for _, scope in app.calls] == [
+        None,
+        1,
+        2,
+        3,
+    ]
     assert app.calls[0][0] == PUBLIC_BOT_COMMANDS
     assert all(commands == SUDOER_BOT_COMMANDS for commands, _ in app.calls[1:])
 
@@ -325,7 +360,9 @@ async def test_broadcast_errors_are_attached_as_text_file() -> None:
             self.caption = caption
 
     message = FakeMessage()
-    await send_broadcast_errors(message, ["-1001: Forbidden", "-1002: ChatAdminRequired"])
+    await send_broadcast_errors(
+        message, ["-1001: Forbidden", "-1002: ChatAdminRequired"]
+    )
 
     assert message.document.name == "broadcast_errors.txt"
     assert message.document.getvalue().decode() == (
@@ -348,14 +385,18 @@ async def test_reply_list_shows_ten_truncated_items_with_preview_actions() -> No
     class FakeRepository:
         async def get(self, chat_id):
             return {
-                "responses": [f"local reply {index} " + "x" * 50 for index in range(1, 12)],
+                "responses": [
+                    f"local reply {index} " + "x" * 50 for index in range(1, 12)
+                ],
                 "excluded_global_responses": [],
             }
 
         async def get_global_responses(self):
             return []
 
-    text, keyboard = await reply_list_content(SimpleNamespace(), FakeRepository(), -100123, 0)
+    text, keyboard = await reply_list_content(
+        SimpleNamespace(), FakeRepository(), -100123, 0
+    )
 
     assert "local reply 10" in text
     assert "local reply 11" not in text
@@ -391,7 +432,9 @@ async def test_reply_list_shows_inherited_keyword_global_replies() -> None:
         async def get(self, chat_id):
             return {
                 "reply_mode": "keyword",
-                "keyword_responses": [{"keywords": ["local"], "response": "local reply"}],
+                "keyword_responses": [
+                    {"keywords": ["local"], "response": "local reply"}
+                ],
                 "global_replies_enabled": True,
                 "excluded_global_responses": [],
             }
@@ -399,7 +442,9 @@ async def test_reply_list_shows_inherited_keyword_global_replies() -> None:
         async def get_global_keyword_responses(self):
             return [{"keywords": ["global"], "response": "global reply"}]
 
-    text, keyboard = await reply_list_content(SimpleNamespace(), FakeRepository(), -100123, 0)
+    text, keyboard = await reply_list_content(
+        SimpleNamespace(), FakeRepository(), -100123, 0
+    )
 
     assert "K1. local -> local reply" in text
     assert "G1. global -> global reply" in text
@@ -416,7 +461,9 @@ async def test_global_reply_list_has_preview_next_to_delete() -> None:
         async def get_global_responses(self):
             return ["one", "two"]
 
-    _, keyboard = await global_reply_list_content(SimpleNamespace(), FakeRepository(), 0)
+    _, keyboard = await global_reply_list_content(
+        SimpleNamespace(), FakeRepository(), 0
+    )
 
     assert [button.text for button in keyboard.inline_keyboard[0]] == ["👁 1", "🗑 1"]
     assert keyboard.inline_keyboard[0][0].callback_data == "global:preview-1-0"
@@ -432,15 +479,19 @@ async def test_response_preview_text_is_suitable_for_in_place_menu() -> None:
 def test_message_label_uses_text_preview() -> None:
     message = SimpleNamespace(text="Hello\nthere", caption=None, media=None)
     assert message_label(message) == "Hello there"
-    assert response_label(
-        {"kind": "message", "label": "Hello there", "has_preview": True}
-    ) == "Hello there"
+    assert (
+        response_label({"kind": "message", "label": "Hello there", "has_preview": True})
+        == "Hello there"
+    )
 
 
 def test_message_label_uses_media_type_without_preview() -> None:
     message = SimpleNamespace(text=None, caption=None, media="MessageMediaType.PHOTO")
     assert message_label(message) == "photo"
-    assert response_label({"kind": "message", "label": "photo", "has_preview": False}) == "[photo]"
+    assert (
+        response_label({"kind": "message", "label": "photo", "has_preview": False})
+        == "[photo]"
+    )
 
 
 @pytest.mark.asyncio
@@ -495,7 +546,9 @@ def test_link_keyboard_uses_configured_links() -> None:
     )
 
     assert keyboard is not None
-    assert [button.url for row in keyboard.inline_keyboard for button in row if button.url] == [
+    assert [
+        button.url for row in keyboard.inline_keyboard for button in row if button.url
+    ] == [
         "https://t.me/example_bot?startgroup=true",
         "https://t.me/updates",
         "https://t.me/support",
@@ -506,7 +559,9 @@ def test_link_keyboard_uses_configured_links() -> None:
         ["❓ Help", "📢 Updates"],
         ["💬 Support", "👤 Owner"],
     ]
-    assert keyboard.inline_keyboard[0][0].url == "https://t.me/example_bot?startgroup=true"
+    assert (
+        keyboard.inline_keyboard[0][0].url == "https://t.me/example_bot?startgroup=true"
+    )
     styles = {
         button.text: button.style for row in keyboard.inline_keyboard for button in row
     }
@@ -542,7 +597,9 @@ def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
 def test_sudoer_panel_has_privileged_shortcuts() -> None:
     keyboard = sudoer_panel_keyboard()
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
-    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
+    styles = {
+        button.text: button.style for row in keyboard.inline_keyboard for button in row
+    }
 
     assert labels == ["🌐 Global Replies", "📊 Stats", "⌘ Commands", "⬅️ Back"]
     assert styles["📊 Stats"] == ButtonStyle.DEFAULT
@@ -586,7 +643,9 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "🌐 Global Replies: On" in labels
     assert "🌐 Global Reactions: On" in labels
     assert "🌐 Global Options" not in labels
-    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
+    styles = {
+        button.text: button.style for row in keyboard.inline_keyboard for button in row
+    }
     assert styles["➕ Add Replies"] == ButtonStyle.SUCCESS
     assert styles["➕ Add Reactions"] == ButtonStyle.SUCCESS
     assert styles["🌐 Status: Global"] == ButtonStyle.DEFAULT
@@ -692,7 +751,9 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
         "🎭 Clear Reactions",
         "🔄 Refresh",
     ]
-    styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
+    styles = {
+        button.text: button.style for row in keyboard.inline_keyboard for button in row
+    }
     assert styles["🎭 Reactions: On"] == ButtonStyle.DEFAULT
     assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
@@ -739,7 +800,9 @@ async def test_group_onboarding_mentions_only_unmet_requirements() -> None:
             return SimpleNamespace(status=ChatMemberStatus.ADMINISTRATOR)
 
     message = SimpleNamespace(chat=SimpleNamespace(id=-100123))
-    text, keyboard = await group_onboarding_content(FakeClient(), FakeRepository(), message)
+    text, keyboard = await group_onboarding_content(
+        FakeClient(), FakeRepository(), message
+    )
 
     assert "Promote me" not in text
     assert "OK" not in text
