@@ -42,6 +42,11 @@ reaction.
 
 View logs with `sudo journalctl -u autoreply -f`.
 
+The bot stores its Telegram session as `autoreply_bot.session` in
+`/opt/autoreply`. Keep that file in place across restarts and redeploys so
+Kurigram can reuse the auth key instead of creating a new login session every
+time.
+
 Set your numeric Telegram user ID in `.env`:
 
 ```env
@@ -72,7 +77,7 @@ The owner can attach a photo to the `/start` and `/help` menu by sending a
 photo with `/start_img` as its caption, or by replying to a photo with
 `/start_img`. Use `/start_img off` to remove it.
 
-The owner can open `/global_defaults` in private chat to manage global replies.
+The owner can open `/globals` in private chat to manage global replies.
 Every enabled group rotates through its local replies and the global replies
 together. Group administrators can see global replies in **View Replies**, but
 cannot delete or change them.
@@ -118,6 +123,12 @@ The private manager lets admins:
 - Cycle the random reaction chance between 0%, 25%, 50%, 75%, and 100%.
 - Enable or disable global replies for the group.
 - Exclude individual global replies from the group.
+- Switch between random mode and keyword mode. Keyword mode keeps its own reply
+  and reaction lists, requires keywords for each saved item, and replies/reacts
+  only when a keyword matches. Chance, cooldown, and rate-limit controls are not
+  used in keyword mode.
+- Delete replies for the current mode with `/delete_replies`, or delete both
+  random and keyword replies with `/delete_all_replies`.
 Replies are selected randomly from the group's local replies and its allowed
 global replies. Reply lists show 10 truncated entries per page and stay in one
 editable menu while previewing, deleting, excluding, or changing pages.

@@ -175,7 +175,8 @@ def test_public_bot_menu_hides_sudoer_commands() -> None:
         "updates",
         "support",
         "owner_link",
-        "global_defaults",
+        "sudos",
+        "globals",
         "broadcast",
         "stats",
         "start_img",
@@ -218,8 +219,8 @@ def test_start_text_contains_setup_steps() -> None:
     assert "/autoreply" in START_TEXT
     assert "✨ Auto Reply" in START_TEXT
     assert "/global_defaults" not in HELP_TEXT
-    assert "/global_defaults" in SUDOER_HELP_TEXT
-    assert "/broadcast" in SUDOER_HELP_TEXT
+    assert "/global_defaults" not in SUDOER_HELP_TEXT
+    assert "/sudos" in SUDOER_HELP_TEXT
 
 
 @pytest.mark.asyncio
@@ -487,7 +488,7 @@ def test_link_keyboard_shows_sudo_panel_only_when_requested() -> None:
 
     assert "🛡 Sudo Panel" not in regular_labels
     assert "🛡 Sudo Panel" in sudoer_labels
-    assert "/broadcast -copy" in SUDOER_PANEL_TEXT
+    assert "Choose the area" in SUDOER_PANEL_TEXT
     sudoer_styles = {
         button.text: button.style for row in sudoer.inline_keyboard for button in row
     }
@@ -499,8 +500,8 @@ def test_sudoer_panel_has_privileged_shortcuts() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
 
-    assert labels == ["🌐 Global Replies", "📣 Broadcast Help", "⬅️ Back"]
-    assert styles["📣 Broadcast Help"] == ButtonStyle.PRIMARY
+    assert labels == ["🌐 Global Replies", "📊 Stats", "⌘ Commands", "⬅️ Back"]
+    assert styles["📊 Stats"] == ButtonStyle.DEFAULT
     assert styles["⬅️ Back"] == ButtonStyle.DANGER
 
 

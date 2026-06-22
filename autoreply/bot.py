@@ -28,6 +28,7 @@ from autoreply.repository import (
     DEFAULT_REACTION_CHANCE,
     DEFAULT_REPLY_CHANCE,
     GroupRepository,
+    split_keywords,
 )
 
 
@@ -39,6 +40,8 @@ LOGGER = logging.getLogger(__name__)
 COMMANDS = [
     "autoreply",
     "reaction",
+    "delete_replies",
+    "delete_all_replies",
 ]
 PUBLIC_BOT_COMMANDS = [
     BotCommand("start", "🚀 Open the bot"),
@@ -50,7 +53,8 @@ SUDOER_BOT_COMMANDS = [
     BotCommand("updates", "📢 Set updates link"),
     BotCommand("support", "💬 Set support link"),
     BotCommand("owner_link", "👤 Set owner link"),
-    BotCommand("global_defaults", "🌐 Manage global replies"),
+    BotCommand("sudos", "🛡 Open sudo panel"),
+    BotCommand("globals", "🌐 Manage global replies"),
     BotCommand("broadcast", "📣 Broadcast to groups"),
     BotCommand("stats", "📊 Bot statistics"),
     BotCommand("start_img", "🖼 Set start image"),
@@ -71,15 +75,15 @@ HELP_TEXT = (
 )
 SUDOER_HELP_TEXT = (
     f"{HELP_TEXT}\n\n"
-    "🌐 /global_defaults — global replies\n"
-    "📣 /broadcast — broadcast a replied message\n"
-    "📊 /stats — usage statistics\n"
-    "🖼 /start_img — start image\n"
-    "🔗 /updates, /support, /owner_link — menu links"
+    "🛡 /sudos — open sudo tools, stats, globals, broadcasts, and menu links."
 )
 SUDOER_PANEL_TEXT = (
     "🛡 Sudo Panel\n\n"
-    "🌐 /global_defaults — global replies\n"
+    "Choose the area you want to manage."
+)
+SUDOER_COMMANDS_TEXT = (
+    "⌘ Sudo Commands\n\n"
+    "🌐 /globals — global replies\n"
     "📣 Reply with /broadcast — forward to groups\n"
     "📣 /broadcast -copy — send without forward header\n"
     "👤 /broadcast -user — also send to users\n"
@@ -214,14 +218,15 @@ def sudoer_panel_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     "🌐 Global Replies",
-                    callback_data="global:open",
-                    style=ButtonStyle.PRIMARY,
+                    callback_data="start:globals",
                 ),
                 InlineKeyboardButton(
-                    "📣 Broadcast Help",
-                    callback_data="start:broadcast-help",
-                    style=ButtonStyle.PRIMARY,
+                    "📊 Stats",
+                    callback_data="start:stats",
                 ),
+            ],
+            [
+                InlineKeyboardButton("⌘ Commands", callback_data="start:commands"),
             ],
             [
                 InlineKeyboardButton(
@@ -231,6 +236,12 @@ def sudoer_panel_keyboard() -> InlineKeyboardMarkup:
                 )
             ],
         ]
+    )
+
+
+def sudoer_commands_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ Sudo Panel", callback_data="start:sudo", style=ButtonStyle.DANGER)]]
     )
 
 
@@ -285,6 +296,14 @@ def response_label(response: object) -> str:
     return "[unsupported response]"
 
 
+def keyword_entry_label(entry: dict) -> str:
+    return ", ".join(entry.get("keywords", [])) or "keyword"
+
+
+def keyword_response(entry: dict) -> object:
+    return entry.get("response")
+
+
 def truncate_label(label: str, limit: int = REPLY_LABEL_LIMIT) -> str:
     label = " ".join(label.split())
     return label if len(label) <= limit else label[: limit - 3] + "..."
@@ -298,6 +317,41 @@ def callback_index_page(action: str, prefix: str) -> tuple[int, int]:
 async def response_preview_text(client: Client, response: object, title: str) -> str:
     label = await display_response_label(client, response)
     return f"👁 {title}\n\n{label[:3900]}"
+
+
+def preview_keyboard(back_data: str, action_text: str, action_data: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data=back_data, style=ButtonStyle.DANGER),
+                InlineKeyboardButton(action_text, callback_data=action_data),
+            ]
+        ]
+    )
+
+
+async def show_response_preview(
+    client: Client,
+    query: CallbackQuery,
+    response: object,
+    title: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    if isinstance(response, dict) and response.get("kind") == "message":
+        try:
+            await client.copy_message(
+                chat_id=query.message.chat.id,
+                from_chat_id=response["chat_id"],
+                message_id=response["message_id"],
+            )
+            await query.message.reply_text(f"👁 {title}", reply_markup=reply_markup)
+            return
+        except (KeyError, RPCError):
+            LOGGER.exception("Could not copy preview message")
+    await query.message.edit_text(
+        await response_preview_text(client, response, title),
+        reply_markup=reply_markup,
+    )
 
 
 async def display_response_label(client: Client, response: object) -> str:
@@ -323,10 +377,15 @@ async def reply_list_content(
     page: int,
 ) -> tuple[str, InlineKeyboardMarkup]:
     document = await repository.get(chat_id)
-    local_responses = document["responses"]
+    keyword_mode = document.get("reply_mode") == "keyword"
+    local_responses = document.get("keyword_responses", []) if keyword_mode else document["responses"]
     global_responses = await repository.get_global_responses()
-    combined = [("local", index, response) for index, response in enumerate(local_responses, 1)]
-    combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
+    combined = [
+        ("keyword" if keyword_mode else "local", index, response)
+        for index, response in enumerate(local_responses, 1)
+    ]
+    if not keyword_mode:
+        combined += [("global", index, response) for index, response in enumerate(global_responses, 1)]
     page_count = max(1, (len(combined) + REPLIES_PER_PAGE - 1) // REPLIES_PER_PAGE)
     page = max(0, min(page, page_count - 1))
     page_items = combined[page * REPLIES_PER_PAGE : (page + 1) * REPLIES_PER_PAGE]
@@ -334,17 +393,26 @@ async def reply_list_content(
     lines = []
     buttons = []
     for source, index, response in page_items:
-        label = truncate_label(await display_response_label(client, response))
-        if source == "local":
-            lines.append(f"L{index}. {label}")
+        stored_response = keyword_response(response) if source == "keyword" else response
+        label = truncate_label(await display_response_label(client, stored_response))
+        if source in {"local", "keyword"}:
+            prefix = "K" if source == "keyword" else "L"
+            if source == "keyword":
+                label = f"{keyword_entry_label(response)} -> {label}"
+            lines.append(f"{prefix}{index}. {label}")
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        f"👁 L{index}", callback_data=f"mgr:preview-l-{index}-{page}:{chat_id}"
+                        f"👁 {prefix}{index}",
+                        callback_data=f"mgr:preview-{'k' if source == 'keyword' else 'l'}-{index}-{page}:{chat_id}",
                     ),
                     InlineKeyboardButton(
-                        f"🗑 L{index}",
-                        callback_data=f"mgr:delete-{index}-{page}:{chat_id}",
+                        f"🗑 {prefix}{index}",
+                        callback_data=(
+                            f"mgr:delete-keyword-{index}-{page}:{chat_id}"
+                            if source == "keyword"
+                            else f"mgr:delete-{index}-{page}:{chat_id}"
+                        ),
                         style=ButtonStyle.DANGER,
                     ),
                 ]
@@ -555,89 +623,100 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     setting = lambda name, value: (
         f"🏠 {value}" if name in overrides else f"🌐 Global: {value}"
     )
+    keyword_mode = document.get("reply_mode") == "keyword"
     enabled_label = "⏸ Disable" if document["enabled"] else "▶️ Enable"
     reactions_label = "🎭 Reactions: On" if document.get("reactions_enabled", True) else "🎭 Reactions: Off"
-    return InlineKeyboardMarkup(
+    rows = [
+        [
+            InlineKeyboardButton(
+                "➕ Add Keyword Reply" if keyword_mode else "➕ Add Reply",
+                callback_data=f"mgr:add:{chat_id}",
+                style=ButtonStyle.SUCCESS,
+            ),
+            InlineKeyboardButton("📚 Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY),
+        ],
+        [
+            InlineKeyboardButton(
+                "🎯 Mode: Keyword" if keyword_mode else "🎲 Mode: Random",
+                callback_data=f"mgr:mode:{chat_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                setting("enabled", enabled_label),
+                callback_data=f"mgr:toggle:{chat_id}",
+                style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
+            ),
+            InlineKeyboardButton(
+                setting("reactions_enabled", reactions_label),
+                callback_data=f"mgr:reactions:{chat_id}",
+                style=ButtonStyle.DANGER if document.get("reactions_enabled", True) else ButtonStyle.SUCCESS,
+            ),
+        ],
+    ]
+    if keyword_mode:
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(
+                        "➕ Add Keyword Reaction",
+                        callback_data=f"mgr:add-keyword-reaction:{chat_id}",
+                        style=ButtonStyle.SUCCESS,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🗑 Clear Mode Replies",
+                        callback_data=f"mgr:confirm-clear:{chat_id}",
+                        style=ButtonStyle.DANGER,
+                    ),
+                    InlineKeyboardButton(
+                        "🧹 Delete All Replies",
+                        callback_data=f"mgr:confirm-clear-all:{chat_id}",
+                        style=ButtonStyle.DANGER,
+                    ),
+                ],
+                [InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}")],
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
+    rows.extend(
         [
             [
                 InlineKeyboardButton(
-                    "➕ Add Reply", callback_data=f"mgr:add:{chat_id}", style=ButtonStyle.SUCCESS
-                ),
-                InlineKeyboardButton(
-                    "📚 Replies", callback_data=f"mgr:list:{chat_id}", style=ButtonStyle.PRIMARY
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    setting("enabled", enabled_label),
-                    callback_data=f"mgr:toggle:{chat_id}",
-                    style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
-                ),
-                InlineKeyboardButton(
-                    setting("reactions_enabled", reactions_label),
-                    callback_data=f"mgr:reactions:{chat_id}",
-                    style=(
-                        ButtonStyle.DANGER
-                        if document.get("reactions_enabled", True)
-                        else ButtonStyle.SUCCESS
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    setting(
-                        "reply_chance",
-                        f"Reply: {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
-                    ),
+                    setting("reply_chance", f"Reply: {document.get('reply_chance', DEFAULT_REPLY_CHANCE)}%"),
                     callback_data=f"mgr:reply-chance:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    setting(
-                        "reaction_chance",
-                        f"React: {document.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%",
-                    ),
+                    setting("reaction_chance", f"React: {document.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%"),
                     callback_data=f"mgr:chance:{chat_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    setting(
-                        "cooldown_seconds",
-                        f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
-                    ),
+                    setting("cooldown_seconds", f"Cooldown: {document.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s"),
                     callback_data=f"mgr:cooldown:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    setting(
-                        "rate_limit_per_minute",
-                        f"Rate: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
-                    ),
+                    setting("rate_limit_per_minute", f"Rate: {document.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min"),
                     callback_data=f"mgr:rate:{chat_id}",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    "🌐 Globals: On"
-                    if document.get("global_replies_enabled", True)
-                    else "🌐 Globals: Off",
+                    "🌐 Globals: On" if document.get("global_replies_enabled", True) else "🌐 Globals: Off",
                     callback_data=f"mgr:globals:{chat_id}",
-                    style=(
-                        ButtonStyle.DANGER
-                        if document.get("global_replies_enabled", True)
-                        else ButtonStyle.SUCCESS
-                    ),
+                    style=ButtonStyle.DANGER if document.get("global_replies_enabled", True) else ButtonStyle.SUCCESS,
                 )
             ],
             [
-                InlineKeyboardButton(
-                    "🗑 Clear Replies",
-                    callback_data=f"mgr:confirm-clear:{chat_id}",
-                    style=ButtonStyle.DANGER,
-                ),
-                InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}"),
+                InlineKeyboardButton("🗑 Clear Replies", callback_data=f"mgr:confirm-clear:{chat_id}", style=ButtonStyle.DANGER),
+                InlineKeyboardButton("🧹 Delete All Replies", callback_data=f"mgr:confirm-clear-all:{chat_id}", style=ButtonStyle.DANGER),
             ],
+            [InlineKeyboardButton("🔄 Refresh", callback_data=f"mgr:open:{chat_id}")],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def saved_reply_keyboard(chat_id: int) -> InlineKeyboardMarkup:
@@ -687,7 +766,6 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
                     callback_data="global:toggle",
-                    style=ButtonStyle.DANGER if config["enabled"] else ButtonStyle.SUCCESS,
                 ),
                 InlineKeyboardButton(
                     "🎭 Reactions: On"
@@ -766,9 +844,19 @@ async def global_manager_content(repository: GroupRepository) -> tuple[str, Inli
 async def manager_content(client: Client, repository: GroupRepository, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await client.get_chat(chat_id)
     document = await repository.get(chat_id)
-    local_count = len(document["responses"])
+    keyword_mode = document.get("reply_mode") == "keyword"
+    local_count = len(document.get("keyword_responses", [])) if keyword_mode else len(document["responses"])
+    keyword_reaction_count = len(document.get("keyword_reactions", []))
     global_count = len(await repository.get_global_responses())
     rate = document.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE) or "∞"
+    if keyword_mode:
+        text = (
+            f"⚙️ {chat.title or chat_id}\n\n"
+            f"{'🟢 Active' if document['enabled'] else '🔴 Paused'}  •  🎯 Keyword mode\n"
+            f"📚 {local_count} keyword replies  •  🎭 {keyword_reaction_count} keyword reactions\n"
+            "Only matching keywords reply or react. Cooldown, chance, and rate limits are skipped in this mode."
+        )
+        return text, manager_keyboard(chat_id, document)
     text = (
         f"⚙️ {chat.title or chat_id}\n\n"
         f"{'🟢 Active' if document['enabled'] else '🔴 Paused'}  •  "
@@ -903,7 +991,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         await query.message.reply_text(help_text)
         await query.answer()
 
-    @app.on_callback_query(filters.regex(r"^start:(sudo|broadcast-help|back)$"))
+    @app.on_callback_query(filters.regex(r"^start:(sudo|commands|globals|stats|back)$"))
     async def start_panel_callback(client: Client, query: CallbackQuery) -> None:
         if not query.message:
             return
@@ -921,22 +1009,21 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         if not query_is_sudoer(settings, query):
             await query.answer("⛔ Sudoers only.", show_alert=True)
             return
-        if action == "broadcast-help":
+        if action == "commands":
+            await show_callback_menu(query.message, SUDOER_COMMANDS_TEXT, sudoer_commands_keyboard())
+        elif action == "stats":
+            stats = await repository.stats()
             await show_callback_menu(
                 query.message,
-                "📣 Broadcast\n\n"
-                "Reply with /broadcast to forward.\n"
-                "Flags: -copy, -user",
-                InlineKeyboardMarkup(
-                    [[
-                        InlineKeyboardButton(
-                            "⬅️ Sudo Panel",
-                            callback_data="start:sudo",
-                            style=ButtonStyle.DANGER,
-                        )
-                    ]]
-                ),
+                "📊 Bot Statistics\n\n"
+                f"💬 Private chats: {stats['private_users']}\n"
+                f"👤 Unique users: {stats['users']}\n"
+                f"👥 Known groups: {stats['groups']}",
+                sudoer_commands_keyboard(),
             )
+        elif action == "globals":
+            text, keyboard = await global_manager_content(repository)
+            await query.message.reply_text(text, reply_markup=keyboard)
         else:
             await show_callback_menu(query.message, SUDOER_PANEL_TEXT, sudoer_panel_keyboard())
         await query.answer()
@@ -945,13 +1032,19 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def private_manager_hint(_: Client, message: Message) -> None:
         await message.reply_text("⚙️ Send /autoreply in your group.")
 
-    @app.on_message(filters.private & filters.command("global_defaults"))
-    async def global_defaults_command(_: Client, message: Message) -> None:
+    @app.on_message(filters.private & filters.command(["sudos", "globals", "global_defaults"]))
+    async def sudo_command(_: Client, message: Message) -> None:
         if not is_sudoer(settings, message):
             await message.reply_text("⛔ Sudoers only.")
             return
-        text, keyboard = await global_manager_content(repository)
-        await message.reply_text(text, reply_markup=keyboard)
+        command = message.command[0].lower()
+        if command == "global_defaults":
+            await message.reply_text("🌐 /global_defaults moved to /globals.")
+        if command in {"globals", "global_defaults"}:
+            text, keyboard = await global_manager_content(repository)
+            await message.reply_text(text, reply_markup=keyboard)
+            return
+        await message.reply_text(SUDOER_PANEL_TEXT, reply_markup=sudoer_panel_keyboard())
 
     @app.on_message(filters.private & filters.command("stats"))
     async def stats_command(_: Client, message: Message) -> None:
@@ -1060,6 +1153,23 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def handle_command(client: Client, message: Message) -> None:
         if not await require_admin(client, message):
             return
+        command = message.command[0].lower()
+        if command in {"delete_replies", "delete_all_replies"}:
+            if command == "delete_all_replies":
+                await repository.clear_all_responses(message.chat.id)
+                text = "🧹 All random and keyword replies deleted."
+            else:
+                document = await repository.get(message.chat.id)
+                if document.get("reply_mode") == "keyword":
+                    for _ in range(len(document.get("keyword_responses", []))):
+                        await repository.remove_keyword_response(message.chat.id, 1)
+                    text = "🗑 Keyword replies deleted."
+                else:
+                    await repository.clear_responses(message.chat.id)
+                    text = "🗑 Random replies deleted."
+            notice = await message.reply_text(text)
+            asyncio.create_task(delete_later(message, notice))
+            return
         me = await client.get_me()
         launcher = await message.reply_text(
             "⚙️ Manage this group privately.",
@@ -1090,11 +1200,23 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             return
 
         if action == "add":
-            await repository.set_capture_group(query.from_user.id, chat_id)
-            await query.message.reply_text(
-                "➕ Send the reply to save.\n\n/cancel to stop."
-            )
+            document = await repository.get(chat_id)
+            if document.get("reply_mode") == "keyword":
+                await repository.set_keyword_prompt(query.from_user.id, chat_id)
+                await query.message.reply_text(
+                    "🎯 Send the keyword or comma-separated keywords for this reply.\n\n/cancel to stop."
+                )
+            else:
+                await repository.set_capture_group(query.from_user.id, chat_id)
+                await query.message.reply_text("➕ Send the reply to save.\n\n/cancel to stop.")
             await query.answer("📥 Waiting for reply…")
+            return
+        if action == "add-keyword-reaction":
+            await repository.set_keyword_prompt(query.from_user.id, chat_id, reaction=True)
+            await query.message.reply_text(
+                "🎯 Send the keyword or comma-separated keywords for this reaction.\n\n/cancel to stop."
+            )
+            await query.answer("📥 Waiting for keyword…")
             return
         if action == "toggle":
             document = await repository.get(chat_id)
@@ -1140,9 +1262,19 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 await repository.set_rate_limit(chat_id, value)
         elif action == "globals":
             await repository.toggle_global_replies(chat_id)
+            text, keyboard = await manager_content(client, repository, chat_id)
+            await query.message.reply_text(text, reply_markup=keyboard)
+            await query.answer("✅ Updated")
+            return
+        elif action == "mode":
+            document = await repository.get(chat_id)
+            await repository.set_reply_mode(
+                chat_id,
+                "random" if document.get("reply_mode") == "keyword" else "keyword",
+            )
         elif action == "confirm-clear":
             await query.message.reply_text(
-                "🗑 Clear every local reply?",
+                "🗑 Clear replies for the current mode?",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -1162,44 +1294,68 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             )
             await query.answer()
             return
+        elif action == "confirm-clear-all":
+            await query.message.reply_text(
+                "🧹 Delete random and keyword replies?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🧹 Delete All",
+                                callback_data=f"mgr:clear-all:{chat_id}",
+                                style=ButtonStyle.DANGER,
+                            ),
+                            InlineKeyboardButton("✖️ Cancel", callback_data=f"mgr:open:{chat_id}"),
+                        ]
+                    ]
+                ),
+            )
+            await query.answer()
+            return
         elif action == "clear":
-            await repository.clear_responses(chat_id)
+            document = await repository.get(chat_id)
+            if document.get("reply_mode") == "keyword":
+                for _ in range(len(document.get("keyword_responses", []))):
+                    await repository.remove_keyword_response(chat_id, 1)
+            else:
+                await repository.clear_responses(chat_id)
+        elif action == "clear-all":
+            await repository.clear_all_responses(chat_id)
         elif action.startswith("preview-"):
             try:
                 source, raw_index, raw_page = action.removeprefix("preview-").split("-", 2)
                 index = int(raw_index)
                 page = int(raw_page)
-                responses = (
-                    (await repository.get(chat_id))["responses"]
-                    if source == "l"
-                    else await repository.get_global_responses()
-                )
-                response = responses[index - 1]
+                if source == "k":
+                    entry = (await repository.get(chat_id)).get("keyword_responses", [])[index - 1]
+                    response = keyword_response(entry)
+                else:
+                    responses = (
+                        (await repository.get(chat_id))["responses"]
+                        if source == "l"
+                        else await repository.get_global_responses()
+                    )
+                    response = responses[index - 1]
             except (ValueError, IndexError):
                 await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
-            text = await response_preview_text(client, response, f"{source.upper()}{index}")
-            keyboard = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Replies",
-                            callback_data=f"mgr:list-{page}:{chat_id}",
-                            style=ButtonStyle.DANGER,
-                        ),
-                        InlineKeyboardButton(
-                            "🗑 Delete" if source == "l" else "🚫 Exclude",
-                            callback_data=(
-                                f"mgr:delete-{index}-{page}:{chat_id}"
-                                if source == "l"
-                                else f"mgr:exclude-{index}-{page}:{chat_id}"
-                            ),
-                            style=ButtonStyle.DANGER,
-                        ),
-                    ]
-                ]
+            await show_response_preview(
+                client,
+                query,
+                response,
+                f"{source.upper()}{index}",
+                preview_keyboard(
+                    f"mgr:list-{page}:{chat_id}",
+                    "🗑 Delete" if source in {"l", "k"} else "🚫 Exclude",
+                    (
+                        f"mgr:delete-keyword-{index}-{page}:{chat_id}"
+                        if source == "k"
+                        else f"mgr:delete-{index}-{page}:{chat_id}"
+                        if source == "l"
+                        else f"mgr:exclude-{index}-{page}:{chat_id}"
+                    ),
+                ),
             )
-            await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer()
             return
         elif action.startswith("exclude-"):
@@ -1213,6 +1369,17 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             text, keyboard = await reply_list_content(client, repository, chat_id, page)
             await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer("✅ Updated")
+            return
+        elif action.startswith("delete-keyword-"):
+            try:
+                index, page = callback_index_page(action, "delete-keyword-")
+            except ValueError:
+                await query.answer("⚠️ Invalid reply.", show_alert=True)
+                return
+            await repository.remove_keyword_response(chat_id, index)
+            text, keyboard = await reply_list_content(client, repository, chat_id, page)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer("🗑 Deleted")
             return
         elif action.startswith("delete-"):
             try:
@@ -1315,24 +1482,13 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             except (ValueError, IndexError):
                 await query.answer("⚠️ Reply not found.", show_alert=True)
                 return
-            text = await response_preview_text(client, response, f"Global Reply {index}")
-            keyboard = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Replies",
-                            callback_data=f"global:list-{page}",
-                            style=ButtonStyle.DANGER,
-                        ),
-                        InlineKeyboardButton(
-                            "🗑 Delete",
-                            callback_data=f"global:delete-{index}-{page}",
-                            style=ButtonStyle.DANGER,
-                        ),
-                    ]
-                ]
+            await show_response_preview(
+                client,
+                query,
+                response,
+                f"Global Reply {index}",
+                preview_keyboard(f"global:list-{page}", "🗑 Delete", f"global:delete-{index}-{page}"),
             )
-            await query.message.edit_text(text, reply_markup=keyboard)
             await query.answer()
             return
         elif action.startswith("delete-"):
@@ -1377,6 +1533,8 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 "owner_link",
                 "autoreply",
                 "reaction",
+                "sudos",
+                "globals",
                 "global_defaults",
                 "broadcast",
                 "stats",
@@ -1388,16 +1546,46 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     async def capture_private_message(client: Client, message: Message) -> None:
         if not message.from_user:
             return
+        state = await repository.get_capture_state(message.from_user.id)
+        if state.get("capture_keyword_prompt"):
+            chat_id = state.get("capture_chat_id")
+            keywords = split_keywords(message.text or message.caption or "")
+            if not chat_id or not keywords:
+                await message.reply_text("⚠️ Send at least one keyword, separated with commas if needed.")
+                return
+            await repository.set_capture_group(message.from_user.id, chat_id, keywords)
+            if state.get("capture_reaction_prompt"):
+                await repository.set_capture_reaction(message.from_user.id)
+                await message.reply_text("🎭 Now send the reaction emoji for those keywords.\n\n/cancel to stop.")
+            else:
+                await message.reply_text("➕ Now send the reply message for those keywords.\n\n/cancel to stop.")
+            return
         global_capture = (
             settings.is_sudoer(message.from_user.id)
             and await repository.is_global_capture(message.from_user.id)
         )
-        chat_id = await repository.get_capture_group(message.from_user.id)
+        chat_id = state.get("capture_chat_id") or await repository.get_capture_group(message.from_user.id)
         if chat_id is None and not global_capture:
             return
         if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
             await repository.clear_capture_group(message.from_user.id)
             await message.reply_text("⛔ Group admins only.")
+            return
+        if state.get("capture_reaction"):
+            reaction = (message.text or message.caption or "").strip()
+            if not reaction:
+                await message.reply_text("⚠️ Send the reaction as text.")
+                return
+            result = await repository.add_keyword_reaction(
+                chat_id,
+                state.get("capture_keywords", []),
+                reaction,
+            )
+            await repository.clear_capture_group(message.from_user.id)
+            await message.reply_text(
+                "✅ Keyword reaction saved." if result == "added" else "⚠️ Already saved.",
+                reply_markup=saved_reply_keyboard(chat_id) if result == "added" else None,
+            )
             return
         source = message
         if settings.storage_chat_id:
@@ -1416,16 +1604,19 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             "label": message_label(message),
             "has_preview": bool(message.text or message.caption),
         }
-        result = (
-            await repository.add_global_response(response)
-            if global_capture
+        result = await repository.add_global_response(response) if global_capture else (
+            await repository.add_keyword_response(chat_id, state.get("capture_keywords", []), response)
+            if state.get("capture_keywords")
             else await repository.add_response(chat_id, response)
         )
         await repository.clear_capture_group(message.from_user.id)
         replies = {
             "added": "✅ Reply saved.",
             "duplicate": "⚠️ Already saved.",
+            "missing_keyword": "⚠️ Add a keyword first.",
         }
+        if state.get("capture_keywords"):
+            replies["added"] = "✅ Keyword reply saved."
         if global_capture:
             replies["added"] = "✅ Global reply saved and live."
         await message.reply_text(
@@ -1451,18 +1642,25 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
     @app.on_message(filters.create(eligible_message), group=1)
     async def handle_group_message(client: Client, message: Message) -> None:
         group_settings = await repository.get(message.chat.id)
-        if not group_settings["enabled"] or not interaction_allowed(
-            message.chat.id,
-            group_settings.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS),
-            group_settings.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
-        ):
+        if not group_settings["enabled"]:
             return
-        reply_chance = group_settings.get("reply_chance", DEFAULT_REPLY_CHANCE)
-        response = (
-            await repository.next_response(message.chat.id)
-            if chance_succeeds(reply_chance)
-            else None
-        )
+        keyword_mode = group_settings.get("reply_mode") == "keyword"
+        incoming_text = message.text or message.caption or ""
+        if keyword_mode:
+            response = await repository.keyword_response(message.chat.id, incoming_text)
+        else:
+            if not interaction_allowed(
+                message.chat.id,
+                group_settings.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS),
+                group_settings.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE),
+            ):
+                return
+            reply_chance = group_settings.get("reply_chance", DEFAULT_REPLY_CHANCE)
+            response = (
+                await repository.next_response(message.chat.id)
+                if chance_succeeds(reply_chance)
+                else None
+            )
         if response:
             try:
                 await retry_flood_wait(lambda: send_response(client, message, response))
@@ -1474,8 +1672,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             except (KeyError, TypeError, ValueError):
                 LOGGER.exception("Invalid stored response in chat %s", message.chat.id)
 
-        reaction_settings = await repository.reaction_settings(message.chat.id)
-        reaction = choose_reaction(*reaction_settings) if reaction_settings else None
+        if keyword_mode:
+            reaction = await repository.keyword_reaction(message.chat.id, incoming_text)
+        else:
+            reaction_settings = await repository.reaction_settings(message.chat.id)
+            reaction = choose_reaction(*reaction_settings) if reaction_settings else None
         if reaction:
             try:
                 await retry_flood_wait(lambda: message.react(reaction))
@@ -1503,7 +1704,6 @@ async def start() -> None:
         api_id=settings.api_id,
         api_hash=settings.api_hash,
         bot_token=settings.bot_token,
-        in_memory=True,
         parse_mode=ParseMode.DISABLED,
     )
     register_handlers(app, repository, settings)

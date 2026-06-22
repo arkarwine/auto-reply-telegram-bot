@@ -253,6 +253,43 @@ async def test_next_response_combines_local_and_global_replies() -> None:
 
 
 @pytest.mark.asyncio
+async def test_keyword_mode_only_returns_matching_keyword_reply() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "responses": ["random"],
+            "keyword_responses": [
+                {"keywords": ["hello", "hi"], "response": "matched"},
+                {"keywords": ["bye"], "response": "missed"},
+            ],
+        }
+    )
+
+    with patch("autoreply.repository.random.choice", return_value="matched") as choice:
+        assert await repository.keyword_response(123, "Well hello there") == "matched"
+    choice.assert_called_once_with(["matched"])
+    assert await repository.keyword_response(123, "no trigger") is None
+
+
+@pytest.mark.asyncio
+async def test_keyword_reaction_uses_separate_keyword_store() -> None:
+    repository = repository_with(
+        {
+            "_id": 123,
+            "enabled": True,
+            "reply_mode": "keyword",
+            "keyword_reactions": [{"keywords": ["win"], "reaction": "🎉"}],
+            "reactions": ["👍"],
+        }
+    )
+
+    assert await repository.keyword_reaction(123, "big win") == "🎉"
+    assert await repository.reaction_settings(123) is None
+
+
+@pytest.mark.asyncio
 async def test_reply_chance_defaults_to_50_for_enabled_existing_group() -> None:
     repository = repository_with(
         {"_id": 123, "enabled": True, "responses": ["local"], "next_index": 0}
