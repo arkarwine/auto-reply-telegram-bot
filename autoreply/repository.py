@@ -64,7 +64,6 @@ class GroupRepository:
             {"_id": chat_id},
             {
                 "$setOnInsert": {
-                    "reply_mode": DEFAULT_REPLY_MODE,
                     "responses": [],
                     "keyword_responses": [],
                     "keyword_reactions": [],
@@ -175,7 +174,6 @@ class GroupRepository:
                 "$push": {"responses": response},
                 "$setOnInsert": {
                     "enabled": global_config["enabled"],
-                    "reply_mode": DEFAULT_REPLY_MODE,
                     "next_index": 0,
                     "reply_chance": global_config["reply_chance"],
                     "cooldown_seconds": global_config["cooldown_seconds"],
@@ -207,7 +205,6 @@ class GroupRepository:
                 "$set": {"keyword_responses": responses},
                 "$setOnInsert": {
                     "enabled": True,
-                    "reply_mode": "keyword",
                     "responses": [],
                     "keyword_reactions": [],
                     "global_replies_enabled": True,
