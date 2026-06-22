@@ -507,6 +507,42 @@ async def global_reply_list_content(
     return text[:4096], InlineKeyboardMarkup(buttons)
 
 
+async def reaction_list_content(
+    repository: GroupRepository,
+    chat_id: int,
+) -> tuple[str, InlineKeyboardMarkup]:
+    document = await repository.get(chat_id)
+    keyword_mode = document.get("reply_mode") == "keyword"
+    if keyword_mode:
+        entries = document.get("keyword_reactions", [])
+        lines = [
+            f"{index}. {keyword_entry_label(entry)} -> {entry.get('reaction', '')}"
+            for index, entry in enumerate(entries, 1)
+        ]
+    else:
+        entries = document.get("reactions", [])
+        lines = [f"{index}. {reaction}" for index, reaction in enumerate(entries, 1)]
+    text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
+    return (
+        text[:4096],
+        InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Manager", callback_data=f"mgr:open:{chat_id}", style=ButtonStyle.DANGER)]]
+        ),
+    )
+
+
+async def global_reaction_list_content(repository: GroupRepository) -> tuple[str, InlineKeyboardMarkup]:
+    reactions = (await repository.get_global_config()).get("reactions", [])
+    lines = [f"{index}. {reaction}" for index, reaction in enumerate(reactions, 1)]
+    text = "🎭 Reactions\n\n" + "\n".join(lines) if lines else "📭 No reactions yet."
+    return (
+        text[:4096],
+        InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Manager", callback_data="global:open", style=ButtonStyle.DANGER)]]
+        ),
+    )
+
+
 async def send_response(client: Client, incoming: Message, response: object) -> None:
     reply_parameters = ReplyParameters(message_id=incoming.id)
     if isinstance(response, str):
@@ -631,7 +667,13 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                "➕ Add Keyword Reply" if keyword_mode else "➕ Add Reply",
+                "🎯 Mode: Keyword" if keyword_mode else "🎲 Mode: Random",
+                callback_data=f"mgr:mode:{chat_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "➕ Add Replies",
                 callback_data=f"mgr:add:{chat_id}",
                 style=ButtonStyle.SUCCESS,
             ),
@@ -639,9 +681,16 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                setting("enabled", enabled_label),
-                callback_data=f"mgr:toggle:{chat_id}",
-                style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
+                "➕ Add Reactions",
+                callback_data=f"mgr:add-reaction:{chat_id}",
+                style=ButtonStyle.SUCCESS,
+            ),
+            InlineKeyboardButton("🎭 Reactions", callback_data=f"mgr:reaction-list:{chat_id}", style=ButtonStyle.PRIMARY),
+        ],
+        [
+            InlineKeyboardButton(
+                "🌐 Global Replies: On" if document.get("global_replies_enabled", True) else "🌐 Global Replies: Off",
+                callback_data=f"mgr:globals:{chat_id}",
             ),
             InlineKeyboardButton(
                 global_setting(
@@ -651,17 +700,17 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                 callback_data=f"mgr:reactions:{chat_id}",
             ),
         ],
+        [
+            InlineKeyboardButton(
+                setting("enabled", enabled_label),
+                callback_data=f"mgr:toggle:{chat_id}",
+                style=ButtonStyle.DANGER if document["enabled"] else ButtonStyle.SUCCESS,
+            ),
+        ],
     ]
     if keyword_mode:
         rows.extend(
             [
-                [
-                    InlineKeyboardButton(
-                        "➕ Add Keyword Reaction",
-                        callback_data=f"mgr:add-keyword-reaction:{chat_id}",
-                        style=ButtonStyle.SUCCESS,
-                    )
-                ],
                 [
                     InlineKeyboardButton(
                         "🗑 Clear Replies",
@@ -679,12 +728,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                         "🔄 Refresh",
                         callback_data=f"mgr:open:{chat_id}",
                         style=ButtonStyle.SUCCESS,
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🎯 Mode: Keyword",
-                        callback_data=f"mgr:mode:{chat_id}",
                     )
                 ],
             ]
@@ -721,18 +764,6 @@ def manager_keyboard(chat_id: int, document: dict) -> InlineKeyboardMarkup:
                     "🔄 Refresh",
                     callback_data=f"mgr:open:{chat_id}",
                     style=ButtonStyle.SUCCESS,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🌐 Global Replies: On" if document.get("global_replies_enabled", True) else "🌐 Global Replies: Off",
-                    callback_data=f"mgr:globals:{chat_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🎲 Mode: Random",
-                    callback_data=f"mgr:mode:{chat_id}",
                 )
             ],
         ]
@@ -777,10 +808,30 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
+                    "🎯 Mode: Keyword" if config.get("reply_mode") == "keyword" else "🎲 Mode: Random",
+                    callback_data="global:mode",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "➕ Add Replies", callback_data="global:add", style=ButtonStyle.SUCCESS
                 ),
                 InlineKeyboardButton(
                     "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ Add Reactions", callback_data="global:add-reaction", style=ButtonStyle.SUCCESS
+                ),
+                InlineKeyboardButton(
+                    "🎭 Reactions", callback_data="global:reaction-list", style=ButtonStyle.PRIMARY
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
+                    callback_data="global:toggle",
                 ),
             ],
             [
@@ -829,12 +880,6 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
                     callback_data="global:open",
                     style=ButtonStyle.SUCCESS,
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
-                    callback_data="global:toggle",
-                ),
             ],
         ]
     )
@@ -1246,12 +1291,18 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 await query.message.reply_text("➕ Send the reply to save.\n\n/cancel to stop.")
             await query.answer("📥 Waiting for reply…")
             return
-        if action == "add-keyword-reaction":
-            await repository.set_keyword_prompt(query.from_user.id, chat_id, reaction=True)
-            await query.message.reply_text(
-                "🎯 Send the keyword or comma-separated keywords for this reaction.\n\n/cancel to stop."
-            )
-            await query.answer("📥 Waiting for keyword…")
+        if action in {"add-reaction", "add-keyword-reaction"}:
+            document = await repository.get(chat_id)
+            if document.get("reply_mode") == "keyword":
+                await repository.set_keyword_prompt(query.from_user.id, chat_id, reaction=True)
+                await query.message.reply_text(
+                    "🎯 Send the keyword or comma-separated keywords for this reaction.\n\n/cancel to stop."
+                )
+                await query.answer("📥 Waiting for keyword…")
+            else:
+                await repository.set_reaction_capture(query.from_user.id, chat_id)
+                await query.message.reply_text("🎭 Send the reaction emoji to save.\n\n/cancel to stop.")
+                await query.answer("📥 Waiting for reaction…")
             return
         if action == "toggle":
             document = await repository.get(chat_id)
@@ -1307,6 +1358,11 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
                 chat_id,
                 "random" if document.get("reply_mode") == "keyword" else "keyword",
             )
+        elif action == "reaction-list":
+            text, keyboard = await reaction_list_content(repository, chat_id)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer()
+            return
         elif action == "confirm-clear":
             await query.message.reply_text(
                 "🗑 Clear replies?",
@@ -1458,6 +1514,22 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             )
             await query.answer("📥 Waiting for reply…")
             return
+        if action == "add-reaction":
+            await repository.set_reaction_capture(query.from_user.id, global_=True)
+            await query.message.reply_text("🎭 Send the global reaction emoji to save.\n\n/cancel to stop.")
+            await query.answer("📥 Waiting for reaction…")
+            return
+        if action == "reaction-list":
+            text, keyboard = await global_reaction_list_content(repository)
+            await query.message.edit_text(text, reply_markup=keyboard)
+            await query.answer()
+            return
+        if action == "mode":
+            config = await repository.get_global_config()
+            await repository.set_global_config(
+                "reply_mode",
+                "random" if config.get("reply_mode") == "keyword" else "keyword",
+            )
         if action in {"toggle", "reactions", "chance", "reply-chance", "cooldown", "rate"}:
             config = await repository.get_global_config()
             if action == "toggle":
@@ -1495,8 +1567,7 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
         elif action == "clear":
             await repository.clear_global_responses()
         elif action == "clear-reactions":
-            await repository.set_global_config("reactions_enabled", False)
-            await repository.set_global_config("reaction_chance", 0)
+            await repository.clear_global_reactions()
         elif action == "confirm-clear":
             await query.message.reply_text(
                 "🗑 Clear global replies?",
@@ -1624,10 +1695,15 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             settings.is_sudoer(message.from_user.id)
             and await repository.is_global_capture(message.from_user.id)
         )
+        global_reaction_capture = settings.is_sudoer(message.from_user.id) and state.get("capture_global_reaction")
         chat_id = state.get("capture_chat_id") or await repository.get_capture_group(message.from_user.id)
-        if chat_id is None and not global_capture:
+        if chat_id is None and not global_capture and not global_reaction_capture:
             return
-        if not global_capture and not await user_is_group_admin(client, chat_id, message.from_user.id):
+        if (
+            not global_capture
+            and not global_reaction_capture
+            and not await user_is_group_admin(client, chat_id, message.from_user.id)
+        ):
             await repository.clear_capture_group(message.from_user.id)
             await message.reply_text("⛔ Group admins only.")
             return
@@ -1636,15 +1712,27 @@ def register_handlers(app: Client, repository: GroupRepository, settings: Settin
             if not reaction:
                 await message.reply_text("⚠️ Send the reaction as text.")
                 return
-            result = await repository.add_keyword_reaction(
-                chat_id,
-                state.get("capture_keywords", []),
-                reaction,
-            )
+            if state.get("capture_global_reaction"):
+                result = await repository.add_global_reaction(reaction)
+            elif state.get("capture_keywords"):
+                result = await repository.add_keyword_reaction(
+                    chat_id,
+                    state.get("capture_keywords", []),
+                    reaction,
+                )
+            else:
+                result = await repository.add_reaction(chat_id, reaction)
             await repository.clear_capture_group(message.from_user.id)
+            target = "Global reaction" if state.get("capture_global_reaction") else "Reaction"
             await message.reply_text(
-                "✅ Keyword reaction saved." if result == "added" else "⚠️ Already saved.",
-                reply_markup=saved_reply_keyboard(chat_id) if result == "added" else None,
+                f"✅ {target} saved." if result == "added" else "⚠️ Already saved.",
+                reply_markup=(
+                    global_saved_keyboard()
+                    if state.get("capture_global_reaction") and result == "added"
+                    else saved_reply_keyboard(chat_id)
+                    if result == "added"
+                    else None
+                ),
             )
             return
         source = message

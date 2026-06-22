@@ -526,7 +526,13 @@ def test_manager_keyboard_contains_private_controls() -> None:
     )
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
-    assert "➕ Add Reply" in labels
+    assert labels[:5] == [
+        "🎲 Mode: Random",
+        "➕ Add Replies",
+        "📚 Replies",
+        "➕ Add Reactions",
+        "🎭 Reactions",
+    ]
     assert "📚 Replies" in labels
     assert "🌐 Global: ▶️ Enable" in labels
     assert "🌐 Global: Reply: 75%" in labels
@@ -535,10 +541,10 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert "🌐 Global: Rate: ∞/min" in labels
     assert "🌐 Global Replies: On" in labels
     assert "🌐 Global Reactions: On" in labels
-    assert labels[-2:] == ["🌐 Global Replies: On", "🎲 Mode: Random"]
     assert "🌐 Global Options" not in labels
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
-    assert styles["➕ Add Reply"] == ButtonStyle.SUCCESS
+    assert styles["➕ Add Replies"] == ButtonStyle.SUCCESS
+    assert styles["➕ Add Reactions"] == ButtonStyle.SUCCESS
     assert styles["🌐 Global: ▶️ Enable"] == ButtonStyle.SUCCESS
     assert styles["🌐 Global Replies: On"] == ButtonStyle.DEFAULT
     assert styles["🌐 Global Reactions: On"] == ButtonStyle.DEFAULT
@@ -579,8 +585,12 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == [
+        "🎲 Mode: Random",
         "➕ Add Replies",
         "🌐 Replies",
+        "➕ Add Reactions",
+        "🎭 Reactions",
+        "⏸ New Groups: Off",
         "🎭 Reactions: On",
         "💬 Reply: 50%",
         "🎲 React: 25%",
@@ -589,7 +599,6 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
         "🗑 Clear Replies",
         "🎭 Clear Reactions",
         "🔄 Refresh",
-        "⏸ New Groups: Off",
     ]
     styles = {button.text: button.style for row in keyboard.inline_keyboard for button in row}
     assert styles["🎭 Reactions: On"] == ButtonStyle.DEFAULT
