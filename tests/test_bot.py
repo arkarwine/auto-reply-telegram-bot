@@ -556,6 +556,30 @@ def test_manager_keyboard_contains_private_controls() -> None:
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
 
 
+def test_manager_keyboard_hides_random_controls_when_inheriting_keyword_mode() -> None:
+    keyboard = manager_keyboard(
+        -100123,
+        {
+            "reply_mode": "keyword",
+            "enabled": True,
+            "reactions_enabled": True,
+            "global_replies_enabled": True,
+            "config_overrides": [],
+        },
+    )
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert "🌐 Mode: Global" in labels
+    assert "➕ Add Replies" in labels
+    assert "📚 Replies" in labels
+    assert "➕ Add Reactions" in labels
+    assert "🎭 Reactions" in labels
+    assert "Reply: Global" not in labels
+    assert "React: Global" not in labels
+    assert "Cooldown: Global" not in labels
+    assert "Rate: Global" not in labels
+
+
 def test_manager_marks_local_override_directly_on_setting() -> None:
     keyboard = manager_keyboard(
         -100123,
@@ -607,6 +631,33 @@ def test_global_manager_keyboard_contains_owner_controls() -> None:
     assert styles["🎭 Reactions: On"] == ButtonStyle.DEFAULT
     assert styles["🎭 Clear Reactions"] == ButtonStyle.DANGER
     assert styles["🔄 Refresh"] == ButtonStyle.SUCCESS
+
+
+def test_global_manager_keyboard_hides_random_controls_in_keyword_mode() -> None:
+    keyboard = global_manager_keyboard(
+        {
+            "reply_mode": "keyword",
+            "enabled": True,
+            "reply_chance": 80,
+            "cooldown_seconds": 30,
+            "rate_limit_per_minute": 5,
+            "reactions_enabled": True,
+            "reaction_chance": 60,
+        }
+    )
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels == [
+        "🎯 Mode: Keyword",
+        "➕ Add Replies",
+        "🌐 Replies",
+        "➕ Add Reactions",
+        "🎭 Reactions",
+        "⏸ New Groups: Off",
+        "🗑 Clear Replies",
+        "🎭 Clear Reactions",
+        "🔄 Refresh",
+    ]
 
 
 @pytest.mark.asyncio

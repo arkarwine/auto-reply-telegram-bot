@@ -835,64 +835,76 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
         "reactions_enabled": True,
         "reaction_chance": DEFAULT_REACTION_CHANCE,
     }
-    return InlineKeyboardMarkup(
+    keyword_mode = config.get("reply_mode") == "keyword"
+    rows = [
         [
+            InlineKeyboardButton(
+                "🎯 Mode: Keyword" if keyword_mode else "🎲 Mode: Random",
+                callback_data="global:mode",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "➕ Add Replies", callback_data="global:add", style=ButtonStyle.SUCCESS
+            ),
+            InlineKeyboardButton(
+                "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "➕ Add Reactions",
+                callback_data="global:add-reaction",
+                style=ButtonStyle.SUCCESS,
+            ),
+            InlineKeyboardButton(
+                "🎭 Reactions",
+                callback_data="global:reaction-list",
+                style=ButtonStyle.PRIMARY,
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
+                callback_data="global:toggle",
+            ),
+        ],
+    ]
+    if not keyword_mode:
+        rows.extend(
             [
-                InlineKeyboardButton(
-                    "🎯 Mode: Keyword" if config.get("reply_mode") == "keyword" else "🎲 Mode: Random",
-                    callback_data="global:mode",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "➕ Add Replies", callback_data="global:add", style=ButtonStyle.SUCCESS
-                ),
-                InlineKeyboardButton(
-                    "🌐 Replies", callback_data="global:list", style=ButtonStyle.PRIMARY
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "➕ Add Reactions", callback_data="global:add-reaction", style=ButtonStyle.SUCCESS
-                ),
-                InlineKeyboardButton(
-                    "🎭 Reactions", callback_data="global:reaction-list", style=ButtonStyle.PRIMARY
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "⏸ New Groups: Off" if config["enabled"] else "▶️ New Groups: On",
-                    callback_data="global:toggle",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🎭 Reactions: On"
-                    if config.get("reactions_enabled", True)
-                    else "🎭 Reactions: Off",
-                    callback_data="global:reactions",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"💬 Reply: {config.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
-                    callback_data="global:reply-chance",
-                ),
-                InlineKeyboardButton(
-                    f"🎲 React: {config.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%",
-                    callback_data="global:chance",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"⏱ {config.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
-                    callback_data="global:cooldown",
-                ),
-                InlineKeyboardButton(
-                    f"🚦 {config.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
-                    callback_data="global:rate",
-                ),
-            ],
+                [
+                    InlineKeyboardButton(
+                        "🎭 Reactions: On"
+                        if config.get("reactions_enabled", True)
+                        else "🎭 Reactions: Off",
+                        callback_data="global:reactions",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"💬 Reply: {config.get('reply_chance', DEFAULT_REPLY_CHANCE)}%",
+                        callback_data="global:reply-chance",
+                    ),
+                    InlineKeyboardButton(
+                        f"🎲 React: {config.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%",
+                        callback_data="global:chance",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"⏱ {config.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s",
+                        callback_data="global:cooldown",
+                    ),
+                    InlineKeyboardButton(
+                        f"🚦 {config.get('rate_limit_per_minute', DEFAULT_RATE_LIMIT_PER_MINUTE) or '∞'}/min",
+                        callback_data="global:rate",
+                    ),
+                ],
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     "🗑 Clear Replies",
@@ -914,6 +926,7 @@ def global_manager_keyboard(config: dict | None = None) -> InlineKeyboardMarkup:
             ],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def global_saved_keyboard() -> InlineKeyboardMarkup:
@@ -950,13 +963,19 @@ async def global_manager_content(repository: GroupRepository) -> tuple[str, Inli
         else config.get("reactions", [])
     )
     rate = config.get("rate_limit_per_minute", DEFAULT_RATE_LIMIT_PER_MINUTE) or "∞"
+    if keyword_mode:
+        tuning = "🎯 Keyword mode: replies and reactions require matching keywords.\n\n"
+    else:
+        tuning = (
+            f"💬 {config.get('reply_chance', DEFAULT_REPLY_CHANCE)}%  •  "
+            f"🎲 {config.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%  •  "
+            f"⏱ {config.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s  •  🚦 {rate}/min\n\n"
+        )
     return (
         "🌐 Global Defaults\n\n"
         f"📚 Replies: {len(responses)}  •  🎭 Reactions: {len(reactions)}\n"
         f"{'🟢 New groups active' if config['enabled'] else '🔴 New groups paused'}\n"
-        f"💬 {config.get('reply_chance', DEFAULT_REPLY_CHANCE)}%  •  "
-        f"🎲 {config.get('reaction_chance', DEFAULT_REACTION_CHANCE)}%  •  "
-        f"⏱ {config.get('cooldown_seconds', DEFAULT_COOLDOWN_SECONDS)}s  •  🚦 {rate}/min\n\n"
+        f"{tuning}"
         "These settings are inherited until a group overrides them.",
         global_manager_keyboard(config),
     )
